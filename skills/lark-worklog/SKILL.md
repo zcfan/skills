@@ -48,15 +48,17 @@ Then explicitly offer to follow the official guide and perform the installation 
    node <skill-directory>/scripts/worklog-rules.cjs date
    ```
 
-10. Read [references/worklog-format.md](references/worklog-format.md), then use `lark-sheets` to complete the monthly and daily preflight before interpreting the user's requested update.
+10. Read [references/worklog-format.md](references/worklog-format.md). Run monthly and daily preflight when the conversation has not prepared this workbook for today's local date, when the date or month changed, or after a structural failure. Otherwise use the same-day fast path and read only the cells needed for the request.
 11. When preflight detects that a month or date rollover is required, immediately tell the user that the structural rollover and verification can make this request a little slower than an ordinary update, reassure them that work is continuing, and then proceed without asking for redundant permission.
 12. Re-read the current sheet after preflight. Treat live workbook metadata and cells as the source of truth; never reuse row or column coordinates after a structural change.
 
 ### Fast path within one conversation
 
 - Reuse the selected workbook identity without Drive search.
-- Reuse a successfully resolved current-month sheet ID while the local month is unchanged, but include the date-header row and A2 in the first live sheet read for each request. If B1 is not today's unique header or A2 is not `杂项`, leave the fast path and run the full preflight.
-- Keep task rows and daily columns live: never cache row numbers, column letters, values, styles, or task matches across requests.
+- After a successful preflight, remember the prepared local date and current-month sheet ID in conversation context. If both still match, skip workbook discovery and rollover checks.
+- Reuse a task title/alias-to-row index until a row insertion, row deletion, task identity edit, target switch, or structural failure invalidates it. Before writing, read each targeted cell and confirm that its title or mention token still matches; refresh column A only on mismatch.
+- For explicit row requests, read those rows directly. For multiple status updates, use one contiguous `+cells-get`, one `+cells-set --writes`, and one verification read; read [references/status-updates.md](references/status-updates.md).
+- Treat complete target-cell content as a write precondition. After every `+cells-get`, inspect `warning_message`, `truncated`, `has_more`, and `complete` when present. If the result is incomplete, narrow the range or continue the read until every target cell is complete; never transform or write from a clipped value or partial `rich_text` array.
 - Consolidate independent sheet ranges into the fewest supported read calls. Do not run an explicit auth-status call before every business command; follow `lark-shared` only when authentication actually needs diagnosis.
 
 ## Interpret user input
@@ -69,12 +71,14 @@ Then explicitly offer to follow the official guide and perform the installation 
   - `[x]` — completed item
   - `[~]` — progress or context that should carry to the next day
 - Treat task-level completion separately from daily `[x]` items. Add `状态：已完成` only when the user explicitly completes the whole task.
+- Use `状态：挂起` for a parked task. Retain suspended tasks during month rollover.
 - Keep links, PRDs, designs, decisions, and long-form context in the primary task document. Keep the daily sheet concise.
 
 ## Apply writes
 
 - Treat a clear maintenance request as authorization for its scoped Lark writes and automatic rollover. Ask again only for an ambiguous task, an inaccessible target, or a structural conversion that is not already explicit in the request.
 - Follow the current `lark-sheets` instructions for every table operation, including style inheritance, stdin payloads, high-risk confirmation, and mandatory read-back verification.
+- Read [references/status-updates.md](references/status-updates.md) before changing aliases or statuses in rich-text task cells.
 - Follow the current `lark-doc` instructions for every task-document operation. Create the document before inserting a new task row, and update existing documents surgically rather than overwriting them.
 - Never assume a failed batch rolled back every successful child operation. Parse per-operation results, re-read affected ranges, and reconcile actual state before retrying.
 - If document creation succeeds but a later sheet operation fails, retain and report that document URL. Resume with the same document; never create a duplicate or delete the first document automatically.

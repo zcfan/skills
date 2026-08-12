@@ -7,13 +7,14 @@ Read this reference before changing the spreadsheet or a linked task document. U
 1. [Target discovery](#target-discovery)
 2. [Workbook model](#workbook-model)
 3. [Mandatory preflight](#mandatory-preflight)
-4. [Creating a workbook](#creating-a-workbook)
-5. [Inspecting and resolving tasks](#inspecting-and-resolving-tasks)
-6. [Daily entries](#daily-entries)
-7. [Task identity and metadata](#task-identity-and-metadata)
-8. [Creating a task](#creating-a-task)
-9. [Maintaining task documents](#maintaining-task-documents)
-10. [Verification and failures](#verification-and-failures)
+4. [Complete cell reads](#complete-cell-reads)
+5. [Creating a workbook](#creating-a-workbook)
+6. [Inspecting and resolving tasks](#inspecting-and-resolving-tasks)
+7. [Daily entries](#daily-entries)
+8. [Task identity and metadata](#task-identity-and-metadata)
+9. [Creating a task](#creating-a-task)
+10. [Maintaining task documents](#maintaining-task-documents)
+11. [Verification and failures](#verification-and-failures)
 
 ## Target discovery
 
@@ -52,9 +53,9 @@ Search operates only on resources visible to the current authenticated Lark iden
 
 ## Mandatory preflight
 
-Complete both phases before processing every work-log maintenance request. Use live reads and make the process idempotent.
+Complete both phases before the first work-log maintenance request for a workbook and local date. Run them again when the local date or month changes, after a target switch, or after a structural failure. Reuse a successful same-day preflight from conversation context for ordinary follow-up requests.
 
-For speed, remember the selected workbook and a successfully resolved current-month sheet ID only in the current conversation. While the local month is unchanged, the first read of each later request may combine A2, the complete date-header row, target task cells, and today's cells instead of repeating Drive search and workbook discovery. Fall back to full preflight if B1 is not today's unique header, A2 changes, the month changes, or any cached sheet ID fails. Never cache row numbers or daily column coordinates.
+For speed, remember the selected workbook, current-month sheet ID, prepared local date, and a task identity index only in the current conversation. On the same prepared date, read only the target cells. Reuse cached task rows after a targeted read confirms the expected title or mention token. Refresh column A when that check fails, and invalidate the index after row insertion/deletion or a task identity edit.
 
 If either phase needs a structural write, immediately send a short progress note before writing: explain that automatic date/month rollover plus read-back verification can make this request slightly slower than an ordinary log update, reassure the user that processing is continuing, and do not ask for an extra confirmation.
 
@@ -64,8 +65,8 @@ If either phase needs a structural write, immediately send a short progress note
 2. If the current month exists, do not copy or clean it again.
 3. If it does not exist, require the exact previous month. If that sheet is missing, stop and ask the user; never select an older month.
 4. Copy the exact previous month, rename the copy to the current `YYYYMM`, and move it to index 0. Re-read workbook metadata and verify its title, ID, and index before continuing.
-5. Read column A in the new sheet. Identify completed tasks only by an independent `状态：已完成` line.
-6. Delete those task rows from the new sheet in descending row order. Preserve the previous month unchanged. Re-read column A and verify that no completed task remains.
+5. Read column A in the new sheet. Identify completed tasks only by an independent, exact `状态：已完成` line. Retain `状态：挂起`, active rows with no status, and any other status.
+6. Delete only completed task rows from the new sheet in descending row order. Preserve the previous month unchanged. Re-read column A and verify that no completed task remains.
 7. Treat any failed structural batch as potentially partially applied. Re-read workbook metadata and affected rows before deciding whether to retry.
 
 ### Day rollover
@@ -91,6 +92,16 @@ If either phase needs a structural write, immediately send a short progress note
    ```
 
 10. Re-read A1:B through the last task row and the header row after the batch. Verify that column A's values, rich-text mentions, links, and backgrounds match the pre-insert snapshot exactly; verify B's date, dense carried text, styles, borders, and width. If the structural action did not report a single insertion at B, stop and report the discrepancy.
+
+## Complete cell reads
+
+Every cell used to identify a task, transform text, preserve rich text, carry a day, or verify a write must be read in full. Work-log cells are expected to be modest in size, so completeness takes priority over saving a small amount of output.
+
+- Read the smallest useful range, but do not deliberately lower `--max-chars` enough to clip a target cell.
+- Before using any `+cells-get` result, inspect `warning_message` first, then `truncated`, `has_more`, and `complete` when present. Also confirm `actual_range`, `row_indices`, and `col_indices` cover every requested cell.
+- If any target is incomplete, do not infer the missing suffix and do not write. Narrow to the affected cell or smaller row window, then continue according to the CLI's pagination warning until the full value and full `rich_text` array are available.
+- If the Agent's own stdout limit still clips a targeted response, use `--output-path` in a private temporary directory and accept the file only when its receipt reports `complete: true`; remove the temporary artifact after use. This is transient processing, not persistent Skill configuration.
+- Apply the same completeness checks to verification reads. A visible status prefix is not proof that mentions, links, aliases, or trailing daily items survived.
 
 ## Creating a workbook
 
@@ -139,6 +150,8 @@ When adding an item:
 
 Marking an existing daily todo complete means replacing its leading `[]` with `[x]`; do not append a duplicate completed line. Record ongoing information as `[~]`.
 
+> **Warning:** If a daily cell contains rich text, mentions, or hyperlinks, do not use `+cells-replace`, `+csv-put`, or a plain `value` write. Reconstruct and write its `rich_text` with `+cells-set`. Plain-value writes are suitable only after a read confirms the cell is plain text.
+
 ## Task identity and metadata
 
 Use this visible format in column A:
@@ -149,16 +162,16 @@ Use this visible format in column A:
 状态：已完成
 ```
 
-Omit the alias line when empty and the status line while active. Normalize Unicode case, surrounding whitespace, and punctuation when comparing names, but preserve the user's original spelling when storing a confirmed alias. Deduplicate aliases case-insensitively.
+Use `状态：已完成` for completed tasks and `状态：挂起` for parked tasks. Omit the alias line when empty and the status line while active. Preserve other explicit user-supplied statuses. Normalize Unicode case, surrounding whitespace, and punctuation when comparing names, but preserve the user's original spelling when storing a confirmed alias. Deduplicate aliases case-insensitively.
 
-When updating aliases or status:
+When updating aliases or status, read and follow [status-updates.md](status-updates.md). In summary:
 
 1. Read the full cell with value, rich text, and style through `lark-sheets`.
-2. Preserve every mention and hyperlink object.
+2. Preserve every mention and hyperlink object. Restore required document `link` fields that `+cells-get` omitted; resolve unknown links before writing.
 3. Remove only existing `别名：` and `状态：` text lines.
 4. Append newly rendered metadata lines.
-5. Write the reconstructed rich text without a background-color field.
-6. Re-read and verify mentions, links, metadata, and unchanged background.
+5. Write the reconstructed rich text through `+cells-set`, without style fields. Never use `+cells-replace` on the cell.
+6. Re-read and verify metadata, mention tokens, and unchanged background. Verify returned links when available; otherwise validate the outgoing links separately as described in [status-updates.md](status-updates.md).
 
 Task completion requires an explicit user statement about the whole task. Never infer it from daily `[x]` items.
 
@@ -194,6 +207,7 @@ Fetch the changed section again and verify the new content and existing resource
 - Keep destructive row ranges in descending order.
 - Re-read every written range. For structural changes, also re-read workbook and sheet metadata.
 - Treat a failed batch as potentially partially applied even if current CLI documentation describes transactional behavior.
+- For `+cells-set --writes` partial failures, re-read all affected cells and retry only rows that did not reach the intended state. Do not resend the full batch.
 - If today's header is duplicated, stop and ask the user to resolve it.
 - If the target differs from the reference format, map its rows, columns, task identities, dates, and statuses before acting. Continue compatibly when that mapping is unambiguous and the requested write does not require destructive reshaping.
 - If the mapping is ambiguous or the operation requires structural conversion, describe the mismatch and ask whether to convert the selected workbook or create a compliant one. A user's explicit request for a specific conversion is sufficient authorization for that conversion.
