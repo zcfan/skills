@@ -1,9 +1,11 @@
 ---
 name: playwright-auth-wrapper
-description: Set up and use a private shared Playwright authentication state through routed Setup, Login, and Launch subflows. Use when a user asks to install or configure Playwright Chromium, open or automate a site with persisted browser login, add or refresh a site's login state, verify shared authentication, take authenticated screenshots, or launch multiple isolated browser contexts. On first use, automatically run Setup; prefer the read-only Launch subflow for normal daily automation.
+description: Reuse one manually established Playwright login state across multiple isolated automation instances running in parallel, with routed Setup, Login, and Launch subflows. Use when a user asks to install or configure Playwright Chromium, manually establish or refresh a site's shared login state, open or automate a site with persisted authentication, verify shared authentication, take authenticated screenshots, or run concurrent authenticated browser work. On first use, automatically run Setup; prefer the read-only Launch subflow for normal daily automation.
 ---
 
 # Playwright Auth Wrapper
+
+Enable one manual login to serve multiple parallel automation tasks. Every Launch reads the same saved authentication state into a fresh, isolated Browser Context and never writes that shared state.
 
 Route every request through one Skill while preserving strict state ownership:
 

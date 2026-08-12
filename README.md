@@ -6,8 +6,8 @@ My personal Codex and agent skills. Each `skills/<name>/` directory is an indepe
 
 ## Included Skills
 
-- `playwright-auth-wrapper`: Routes Setup, Login, and Launch based on the user's intent. It installs automatically on first use and defaults to read-only authentication reuse for everyday browser work.
-- `lark-worklog`: Orchestrates the official `lark-shared`, `lark-drive`, `lark-sheets`, and `lark-doc` skills to maintain fragmented todos, progress, task documents, and daily or monthly rollovers in a structured Lark work log.
+- `playwright-auth-wrapper`: Reuses one manually established login state across multiple isolated Playwright automation instances running in parallel. It routes Setup, Login, and Launch based on the user's intent.
+- `lark-worklog`: Records and tracks work progress by maintaining a structured Lark spreadsheet, including todos, progress updates, task documents, and daily or monthly rollovers.
 
 ## Installation
 
@@ -23,11 +23,13 @@ The installer will ask which skill and target agent to use.
 
 ### Install Playwright Auth Wrapper
 
-Setup, Login, and Launch are combined into one skill:
+`playwright-auth-wrapper` provides Setup, Login, and Launch subflows:
 
 ```bash
 npx skills@latest add zcfan/skills --skill playwright-auth-wrapper
 ```
+
+Its core purpose is to let you log in manually once, save that authentication state, and then launch multiple isolated Playwright automation instances in parallel. Every instance reads the same saved state but uses its own Browser Context, so concurrent tasks do not share a writable browser profile or overwrite the login state.
 
 The skill starts with a read-only readiness check and routes requests in this order:
 
@@ -35,11 +37,9 @@ The skill starts with a read-only readiness check and routes requests in this or
 - Explicit login or expired-state refresh request: run Login. This is the only subflow allowed to write `storage-state.json`.
 - Any other page opening, screenshot, or browser automation request: default to read-only Launch. Each task creates an isolated Browser Context, so multiple tasks can safely read the same authentication state in parallel.
 
-When upgrading from the former three-skill layout, install `playwright-auth-wrapper`, then remove `playwright-shared-auth-setup`, `playwright-shared-auth-login`, and `playwright-shared-auth-launch`. The shared authentication directory and file formats are unchanged, so existing login state requires no migration.
-
 ### Use Lark Worklog
 
-`lark-worklog` is a workflow skill and does not implement its own Lark client. It explicitly depends on these four official skills from [LarkSuite CLI](https://github.com/larksuite/cli):
+`lark-worklog` records and tracks work progress by maintaining a structured Lark spreadsheet. It uses these four official skills from [LarkSuite CLI](https://github.com/larksuite/cli):
 
 - `lark-shared`: Authentication, identity, permissions, and error handling.
 - `lark-drive`: Title-based discovery of work-log spreadsheets created by the current authenticated user.

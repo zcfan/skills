@@ -1,11 +1,11 @@
 ---
 name: lark-worklog
-description: Maintain a structured personal work log in a Lark/Feishu spreadsheet discovered by the literal [worklog] title marker, orchestrating the official lark-shared, lark-drive, lark-sheets, and lark-doc skills. Use when the user records fragmented work todos or progress, marks work complete, adds task aliases, creates a new work-log task and its long-lived document, updates related links or design decisions, rolls the log into a new day or month, inspects the current work-log structure, or authorizes creation of a new one.
+description: Record and track work progress by maintaining a structured personal Lark/Feishu spreadsheet discovered by the literal [worklog] title marker. Use when the user records fragmented work todos or progress, marks work complete, adds task aliases, creates a new work-log task and its long-lived document, updates related links or design decisions, rolls the log into a new day or month, inspects the current work-log structure, or authorizes creation of a new one. Requires the official lark-shared, lark-drive, lark-sheets, and lark-doc skills.
 ---
 
 # Lark Worklog
 
-Treat this as a workflow skill. Keep work-log policy here and delegate every Lark operation to the official LarkSuite skills and their `lark-cli` shortcuts. Never implement a second Lark client or invoke `lark-cli` from this skill's helper script.
+Maintain a structured Lark spreadsheet as the source of truth for the user's work. Record todos and progress, preserve task context in linked documents, and keep the log current across days and months.
 
 ## Required official Lark skills
 

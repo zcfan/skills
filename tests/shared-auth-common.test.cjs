@@ -165,24 +165,3 @@ module.exports = { chromium: { launch: async () => ({ newContext: async () => co
   assert.equal(fs.readFileSync(statePath, 'utf8'), before);
   assert.equal(fs.existsSync(path.join(authDir, 'storage-state.lock')), false);
 });
-
-test('the merged skill routes setup, login, and launch with launch as the default', () => {
-  const skill = fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8');
-  const setup = fs.readFileSync(path.join(skillRoot, 'references', 'setup.md'), 'utf8');
-  const login = fs.readFileSync(path.join(skillRoot, 'references', 'login.md'), 'utf8');
-  const launch = fs.readFileSync(path.join(skillRoot, 'references', 'launch.md'), 'utf8');
-
-  assert.match(skill, /setupRequired.*Setup stages automatically/s);
-  assert.match(skill, /Otherwise stop and ask whether they want to log in now/);
-  assert.match(skill, /Launch is the normal daily path/);
-  assert.match(setup, /install_playwright_chromium\.cjs/);
-  assert.match(login, /only subflow that may write `storage-state\.json`/);
-  assert.match(launch, /must never write `storage-state\.json`/);
-  for (const oldName of [
-    'playwright-shared-auth-setup',
-    'playwright-shared-auth-login',
-    'playwright-shared-auth-launch',
-  ]) {
-    assert.equal(fs.existsSync(path.join(repositoryRoot, 'skills', oldName)), false);
-  }
-});

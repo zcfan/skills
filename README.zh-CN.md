@@ -6,8 +6,8 @@
 
 ## 当前 skills
 
-- `playwright-auth-wrapper`：按用户意图路由 Setup、Login 和 Launch 子流程；首次使用自动安装，日常默认只读复用登录态。
-- `lark-worklog`：编排飞书官方的 `lark-shared`、`lark-drive`、`lark-sheets` 和 `lark-doc` Skills，将零散待办、进展、任务文档和跨日/月滚动维护到结构化飞书工作日志中。
+- `playwright-auth-wrapper`：让多个相互隔离的 Playwright 自动化实例并行运行，并复用同一份由用户手动完成的登录态；同时按用户意图路由 Setup、Login 和 Launch 子流程。
+- `lark-worklog`：通过维护结构化飞书表格来记录并跟踪工作进度，包括待办、进展、任务文档以及跨日和跨月滚动。
 
 ## 安装
 
@@ -23,11 +23,13 @@ npx skills@latest add zcfan/skills
 
 ### 安装 Playwright Auth Wrapper
 
-Setup、Login 和 Launch 已合并为一个 Skill，使用一条命令安装：
+`playwright-auth-wrapper` 提供 Setup、Login 和 Launch 三个子流程：
 
 ```bash
 npx skills@latest add zcfan/skills --skill playwright-auth-wrapper
 ```
+
+它的核心作用是：只需手动登录一次并保存登录态，之后即可并行启动多个相互隔离的 Playwright 自动化实例。每个实例只读复用同一份登录态，但使用独立的 Browser Context，因此并发任务不会共享可写的浏览器 Profile，也不会覆盖登录态。
 
 它会先执行只读状态检查，并按以下优先级选择子流程：
 
@@ -35,11 +37,9 @@ npx skills@latest add zcfan/skills --skill playwright-auth-wrapper
 - 明确要求登录或刷新过期状态：运行 Login。只有该子流程能够写入 `storage-state.json`。
 - 其他打开网页、截图和自动化请求：默认运行只读 Launch。每个任务创建独立 Browser Context，可并行读取同一登录态。
 
-从旧版三个 Skills 升级时，先安装新的 `playwright-auth-wrapper`，再移除 `playwright-shared-auth-setup`、`playwright-shared-auth-login` 和 `playwright-shared-auth-launch`。共享认证目录和文件格式保持不变，已有登录态无需迁移。
-
 ### 使用飞书工作日志
 
-`lark-worklog` 是工作流 Skill，不自行实现飞书客户端。它明确依赖飞书官方 [LarkSuite CLI](https://github.com/larksuite/cli) 提供的以下四个 Skills：
+`lark-worklog` 通过维护结构化飞书表格来记录并跟踪工作进度。它使用飞书官方 [LarkSuite CLI](https://github.com/larksuite/cli) 提供的以下四个 Skills：
 
 - `lark-shared`：认证、身份、权限和错误处理。
 - `lark-drive`：按标题搜索当前登录用户创建的工作日志表格。
