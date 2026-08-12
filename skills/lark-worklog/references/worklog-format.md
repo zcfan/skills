@@ -134,12 +134,12 @@ Insert new tasks at row 3.
    ```
 
 2. Keep the returned document URL and token. Stop if creation fails.
-3. Read row 3 style, borders, and row height. The current `lark-cli` inserts after `position`, so insert after row 2 (`position: 2`) to create row 3 with `inherit_style: after`; `+dim-insert` does not inherit row height, so include `+rows-resize` in the same batch.
-4. Write A3 as a document mention (`type: mention`, `mention_type: 22`, returned token, task title). Add aliases as a following text segment when supplied.
-5. Write any initial daily item to today's column in the same batch.
+3. Read row 3 style, borders, and row height. The currently verified `lark-cli` request uses `side: after`, so insert after row 2 (`position: 2`) to create row 3 with `inherit_style: after`. Immediately re-read rows 2–4 and verify that row 3 is blank and the previous row 3 moved to row 4. `+dim-insert` does not reliably preserve row height, so restore the sampled height with `+rows-resize`.
+4. Write A3 as a document mention with all required fields: `type: mention`, `mention_type: 22`, returned `mention_token`, task title in `text`, and the returned document URL in `link`. The current CLI rejects a document mention without `link`. Add aliases as following text segments when supplied.
+5. Re-read A3 before writing anything else. Only after the document mention is confirmed, write any supplied initial daily item to today's column.
 6. Re-read A3 and today's cell. Assert the mention token, title, aliases, item, style, and row height.
 
-If the document succeeds but the sheet batch fails, retain the document, report its URL, re-read the sheet, and retry the linking operation. Do not create a second document and do not delete the first one automatically.
+Do not rely on `+batch-update` as a strict rollback boundary: a failed child operation can leave earlier structural operations applied or partially restored. After any batch error, inspect the per-operation results and re-read rows 2–4 plus row height before retrying. If the document succeeds but a sheet operation fails, retain the document, report its URL, and resume with that same token and URL. Do not create a second document and do not delete the first one automatically.
 
 ## Maintaining task documents
 
@@ -176,6 +176,7 @@ Do not block ordinary work-log maintenance on an optional migration unless a mon
 
 - Before every write, identify the exact workbook, sheet ID, row, column, and affected range.
 - Batch dependent sheet mutations and keep destructive row ranges in descending order.
+- Treat a failed batch as potentially partially applied even if the CLI documentation describes transactional behavior. Re-read the affected range and reconcile actual state before any retry.
 - Re-read every written range. For structural changes, also re-read workbook and sheet metadata.
 - If a task row moves, discard cached row numbers and run `inspect` again.
 - If the exact previous month is missing, stop with `PREVIOUS_MONTH_MISSING`; do not copy an older month.

@@ -45,8 +45,8 @@ An explicit valid link becomes the local default. Store no spreadsheet URL, docu
 
 - Treat a clear maintenance request as authorization for its scoped Lark writes and automatic rollover. Ask again only for an ambiguous task, a structural migration, legacy-color interpretation, or an invalid target.
 - Read the exact target cell and its rich text before writing. Preserve unrelated lines, mentions, hyperlinks, style, borders, row height, and background.
-- Combine multiple sheet mutations into one `lark-cli sheets +batch-update` request where possible. Pass large JSON through stdin.
-- Create a task document before inserting its row. If document creation fails, do not write the row. If row insertion fails afterward, report the created document URL and retry linking it; do not delete it automatically.
+- Combine multiple sheet mutations into one `lark-cli sheets +batch-update` request where useful, but never assume a failed batch rolled back every successful child operation. Parse per-operation results and re-read the affected rows before retrying. Pass large JSON through stdin.
+- Create a task document before inserting its row. If document creation fails, do not write the row. If any later sheet operation fails, report the created document URL, re-read the sheet, and resume with that same document; never create a duplicate or delete the first document automatically.
 - Update existing documents surgically with `docs +fetch` and block-level `docs +update`; never overwrite an existing document merely to add a link or decision.
 - Re-read every changed cell or document section and compare it with the intended result before reporting completion.
 

@@ -395,7 +395,36 @@ test('new task creation escapes XML and inserts only after the document exists',
   assert.match(events[0][1].content, /A &amp; B &lt;test&gt;/);
   assert.match(events[0][1].content, /PRD &amp; notes/);
   assert.deepEqual(events[1][1].aliases, ['AB']);
+  assert.deepEqual(events[1][1].document.rich_text, [
+    {
+      type: 'mention',
+      mention_type: 22,
+      mention_token: 'document-token',
+      text: 'A & B <test>',
+      link: 'https://example.invalid/docx/document-token',
+    },
+    { type: 'text', text: ' ' },
+  ]);
   assert.equal(result.inserted.row, 3);
+});
+
+test('task document mentions require both a token and a link', () => {
+  assert.throws(
+    () => worklog.taskDocumentRichText({ title: 'Example', url: '', token: 'document-token' }),
+    (error) => error.code === 'INVALID_RELATED_URL',
+  );
+  assert.throws(
+    () => worklog.taskDocumentRichText({ title: 'Example', url: 'https://example.invalid/docx/token', token: '' }),
+    (error) => error.code === 'DOCUMENT_TOKEN_REQUIRED',
+  );
+  assert.equal(
+    worklog.taskDocumentRichText({
+      title: 'Example',
+      url: 'https://example.invalid/docx/token',
+      token: 'document-token',
+    })[0].link,
+    'https://example.invalid/docx/token',
+  );
 });
 
 test('date and row helpers cover year boundaries and descending deletion order', () => {

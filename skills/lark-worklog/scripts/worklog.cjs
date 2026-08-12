@@ -499,6 +499,26 @@ function canonicalizeHttpUrl(rawUrl) {
   return parsed.toString();
 }
 
+function taskDocumentRichText({ title, url, token }) {
+  const normalizedTitle = String(title || '').trim();
+  const normalizedToken = String(token || '').trim();
+  if (!normalizedTitle) throw new WorklogError('TASK_TITLE_REQUIRED', 'A task title is required.');
+  if (!normalizedToken) {
+    throw new WorklogError('DOCUMENT_TOKEN_REQUIRED', 'A document token is required for the task mention.');
+  }
+  const normalizedUrl = canonicalizeHttpUrl(url);
+  return [
+    {
+      type: 'mention',
+      mention_type: 22,
+      mention_token: normalizedToken,
+      text: normalizedTitle,
+      link: normalizedUrl,
+    },
+    { type: 'text', text: ' ' },
+  ];
+}
+
 function createTaskTransaction({ task, documents, sheet }) {
   if (!documents || typeof documents.create !== 'function') {
     throw new WorklogError('INVALID_CLIENT', 'A document client is required.');
@@ -515,13 +535,15 @@ function createTaskTransaction({ task, documents, sheet }) {
   if (!document?.url || !(document.document_id || document.token)) {
     throw new WorklogError('DOCUMENT_CREATE_INVALID', 'Document creation returned no URL or document token.');
   }
+  const token = document.document_id || document.token;
   const inserted = sheet.insert({
     title: task.title,
     aliases: parseAliases((task.aliases || []).join('、')),
     daily_entry: task.daily_entry || '',
     document: {
       url: document.url,
-      token: document.document_id || document.token,
+      token,
+      rich_text: taskDocumentRichText({ title: task.title, url: document.url, token }),
     },
   });
   return { document, inserted };
@@ -936,6 +958,7 @@ module.exports = {
   sheetDimensions,
   shiftColumn,
   stripTaskMetadataFromText,
+  taskDocumentRichText,
   taskDocumentXml,
   upsertTaskMetadata,
   validateWorklogStructure,
