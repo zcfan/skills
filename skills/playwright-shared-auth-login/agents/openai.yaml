@@ -1,0 +1,4 @@
+interface:
+  display_name: "Playwright Auth Login"
+  short_description: "Persist shared browser login."
+  default_prompt: "Use $playwright-shared-auth-login to add or refresh a site's shared Playwright login state."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Playwright Auth Launch"
+  short_description: "Launch contexts with shared auth."
+  default_prompt: "Use $playwright-shared-auth-launch to open pages with the shared Playwright login state."
