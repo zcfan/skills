@@ -1,0 +1,31 @@
+README.md
+  s_92632415ea35a1::t_e220d824060505 9-10,26,32-33,42
+README.zh-CN.md
+  s_92632415ea35a1::t_fba8371e398f21 9-10,26,32-33,42
+skills/lark-worklog/SKILL.md
+  s_92632415ea35a1::t_284187ab368645 3,8
+skills/lark-worklog/agents/openai.yaml
+  s_92632415ea35a1::t_bdb0ce454ad635 3
+skills/playwright-auth-wrapper/SKILL.md
+  s_92632415ea35a1::t_67bbfb8428df72 3,8-9
+skills/playwright-auth-wrapper/agents/openai.yaml
+  s_92632415ea35a1::t_ac2ef9c82867f7 3-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b73bfbf364d5aa0b182285e0d630852d4b05cd03",
+  "prompts": {},
+  "sessions": {
+    "s_92632415ea35a1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff0fd-fec7-7321-b5b1-c778ea76a403",
+        "model": "unknown"
+      },
+      "human_author": "zcfan <zcfan@users.noreply.github.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
