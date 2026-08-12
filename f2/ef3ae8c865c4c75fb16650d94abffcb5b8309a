@@ -1,0 +1,25 @@
+AGENTS.md
+  s_92632415ea35a1::t_7bd3adaedaa6ad 1-16
+skills/playwright-auth-wrapper/SKILL.md
+  s_92632415ea35a1::t_cc7e7ee2026f60 10
+skills/playwright-auth-wrapper/references/setup.md
+  s_92632415ea35a1::t_1f3cb85452c50b 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f2ef3ae8c865c4c75fb16650d94abffcb5b8309a",
+  "prompts": {},
+  "sessions": {
+    "s_92632415ea35a1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff0fd-fec7-7321-b5b1-c778ea76a403",
+        "model": "unknown"
+      },
+      "human_author": "zcfan <zcfan@users.noreply.github.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
