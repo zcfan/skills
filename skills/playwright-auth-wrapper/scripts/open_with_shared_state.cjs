@@ -1,11 +1,13 @@
 #!/usr/bin/env node
+'use strict';
+
 const fs = require('fs');
 const path = require('path');
 const { createPrivateTempFile, loadPlaywright, resolvePaths, parseArgs, printJson, protectPrivateFile, sanitizeError, sanitizeUrl } = require('./shared_auth_common.cjs');
 const args = parseArgs(process.argv.slice(2));
 const url = args._[0] || args.url;
-if (!url) { console.error('Usage: open_with_shared_state.cjs <url> [screenshotPath] [--auth-dir <dir>]'); process.exit(2); }
-const screenshotPath = args._[1] || args.screenshot || createPrivateTempFile('playwright-shared-auth', 'page.png');
+if (!url) { console.error('Usage: playwright-auth-wrapper launch <url> [screenshotPath] [--auth-dir <dir>]'); process.exit(2); }
+const screenshotPath = args._[1] || args.screenshot || createPrivateTempFile('playwright-auth-wrapper', 'page.png');
 const paths = resolvePaths(args.authDir);
 
 (async () => {

@@ -113,16 +113,6 @@ for (const skillName of skillDirectories) {
   validateScripts(skillDir);
 }
 
-const commonHelpers = skillDirectories
-  .map((skillName) => path.join(skillsRoot, skillName, 'scripts', 'shared_auth_common.cjs'))
-  .filter((file) => fs.existsSync(file));
-if (commonHelpers.length > 1) {
-  const reference = fs.readFileSync(commonHelpers[0]);
-  for (const helper of commonHelpers.slice(1)) {
-    if (!reference.equals(fs.readFileSync(helper))) fail(`${helper}: shared helper copies have diverged`);
-  }
-}
-
 if (failures.length) {
   for (const failure of failures) console.error(`ERROR ${failure}`);
   process.exit(1);

@@ -6,9 +6,8 @@
 
 1. 没有加入登录态、token、cookie、认证截图、本机绝对路径或其他敏感数据。
 2. skill 目录名与 `SKILL.md` 的 `name` 一致，触发描述清楚说明何时使用。
-3. 修改 setup skill 中的 `shared_auth_common.cjs` 后，运行 `node scripts/sync-shared-auth-common.cjs` 同步另外两个副本。
-4. 行为变化同时更新相关 `SKILL.md` 和测试。
-5. 运行以下命令并确保通过：
+3. 行为变化同时更新相关 `SKILL.md`、按需加载的子流程参考和测试。
+4. 运行以下命令并确保通过：
 
 ```bash
 node scripts/validate-skills.cjs

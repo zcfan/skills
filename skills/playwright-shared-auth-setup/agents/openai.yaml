@@ -1,4 +1,0 @@
-interface:
-  display_name: "Playwright Auth Setup"
-  short_description: "Set up Playwright shared auth."
-  default_prompt: "Use $playwright-shared-auth-setup to initialize shared Playwright auth configuration and install Chromium."

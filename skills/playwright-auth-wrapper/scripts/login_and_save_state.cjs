@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+'use strict';
+
 const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
@@ -19,7 +21,7 @@ const {
 const args = parseArgs(process.argv.slice(2));
 const url = args.url || process.env.PLAYWRIGHT_SHARED_LOGIN_URL;
 if (!url) {
-  console.error('Usage: login_and_save_state.cjs --url <login-or-target-url> [--headed] [--timeout-ms <ms>] [--screenshot <path>]');
+  console.error('Usage: playwright-auth-wrapper login --url <login-or-target-url> [--headed] [--timeout-ms <ms>] [--screenshot <path>]');
   process.exit(2);
 }
 

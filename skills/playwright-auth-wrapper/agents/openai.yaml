@@ -1,0 +1,4 @@
+interface:
+  display_name: "Playwright Auth Wrapper"
+  short_description: "Set up, log in, and launch with shared Playwright auth."
+  default_prompt: "Use $playwright-auth-wrapper to open a site with my shared Playwright login state."

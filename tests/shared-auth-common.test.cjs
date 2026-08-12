@@ -6,11 +6,18 @@ const { spawnSync } = require('child_process');
 const test = require('node:test');
 
 const repositoryRoot = path.resolve(__dirname, '..');
-const common = require('../skills/playwright-shared-auth-setup/scripts/shared_auth_common.cjs');
+const skillRoot = path.join(repositoryRoot, 'skills', 'playwright-auth-wrapper');
+const common = require('../skills/playwright-auth-wrapper/scripts/shared_auth_common.cjs');
 
 function temporaryDirectory() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'shared-auth-test-'));
 }
+
+test('the wrapper preserves the existing shared-auth data directory', () => {
+  const authDir = common.defaultAuthDir();
+  assert.equal(path.basename(authDir), 'shared');
+  assert.equal(path.basename(path.dirname(authDir)), 'playwright-auth');
+});
 
 test('ensureSharedAuth preserves configured context options', () => {
   const authDir = temporaryDirectory();
@@ -28,6 +35,42 @@ test('configureSharedAuth changes only explicitly provided options', () => {
   assert.equal(result.contextOptions.locale, 'fr-FR');
   assert.equal(result.contextOptions.timezoneId, 'UTC');
   assert.equal(result.contextOptions.extraHTTPHeaders['Accept-Language'], 'en-US');
+});
+
+test('readiness inspection detects first use without creating local state', () => {
+  const authDir = path.join(temporaryDirectory(), 'not-created');
+  const status = common.inspectSharedAuth({ authDir });
+  assert.equal(status.setupRequired, true);
+  assert.equal(status.configuration.ready, false);
+  assert.equal(status.runtime.ready, false);
+  assert.equal(status.authentication.hasSavedState, false);
+  assert.match(status.issues.join(','), /missing-storage-state/);
+  assert.match(status.issues.join(','), /playwright-runtime-missing/);
+  assert.equal(fs.existsSync(authDir), false);
+});
+
+test('readiness inspection accepts a configured pinned runtime and Chromium', () => {
+  const authDir = temporaryDirectory();
+  common.ensureSharedAuth({ authDir });
+  const packageRoot = path.join(authDir, 'runtime', 'node_modules', 'playwright');
+  const executablePath = path.join(authDir, 'runtime', 'chromium-test');
+  fs.mkdirSync(packageRoot, { recursive: true });
+  fs.writeFileSync(executablePath, 'browser');
+  fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({
+    name: 'playwright',
+    version: common.PLAYWRIGHT_VERSION,
+    main: 'index.js',
+  }));
+  fs.writeFileSync(
+    path.join(packageRoot, 'index.js'),
+    `module.exports = { chromium: { executablePath: () => ${JSON.stringify(executablePath)} } };\n`,
+  );
+  const status = common.inspectSharedAuth({ authDir });
+  assert.equal(status.setupRequired, false);
+  assert.equal(status.configuration.ready, true);
+  assert.equal(status.runtime.ready, true);
+  assert.deepEqual(status.issues, []);
+  assert.equal(status.runtime.chromiumInstalled, true);
 });
 
 test('auth artifacts use private POSIX permissions', { skip: process.platform === 'win32' }, () => {
@@ -110,7 +153,7 @@ module.exports = { chromium: { launch: async () => ({ newContext: async () => co
   common.ensureSharedAuth({ authDir });
   const statePath = path.join(authDir, 'storage-state.json');
   const before = fs.readFileSync(statePath, 'utf8');
-  const loginScript = path.join(repositoryRoot, 'skills', 'playwright-shared-auth-login', 'scripts', 'login_and_save_state.cjs');
+  const loginScript = path.join(skillRoot, 'scripts', 'login_and_save_state.cjs');
   const result = spawnSync(process.execPath, [loginScript, '--url', 'https://example.test/login?code=must-not-leak', '--auth-dir', authDir, '--timeout-ms', '1'], {
     encoding: 'utf8',
     env: process.env,
@@ -121,4 +164,25 @@ module.exports = { chromium: { launch: async () => ({ newContext: async () => co
   assert.doesNotMatch(result.stdout, /must-not-leak/);
   assert.equal(fs.readFileSync(statePath, 'utf8'), before);
   assert.equal(fs.existsSync(path.join(authDir, 'storage-state.lock')), false);
+});
+
+test('the merged skill routes setup, login, and launch with launch as the default', () => {
+  const skill = fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8');
+  const setup = fs.readFileSync(path.join(skillRoot, 'references', 'setup.md'), 'utf8');
+  const login = fs.readFileSync(path.join(skillRoot, 'references', 'login.md'), 'utf8');
+  const launch = fs.readFileSync(path.join(skillRoot, 'references', 'launch.md'), 'utf8');
+
+  assert.match(skill, /setupRequired.*Setup stages automatically/s);
+  assert.match(skill, /Otherwise stop and ask whether they want to log in now/);
+  assert.match(skill, /Launch is the normal daily path/);
+  assert.match(setup, /install_playwright_chromium\.cjs/);
+  assert.match(login, /only subflow that may write `storage-state\.json`/);
+  assert.match(launch, /must never write `storage-state\.json`/);
+  for (const oldName of [
+    'playwright-shared-auth-setup',
+    'playwright-shared-auth-login',
+    'playwright-shared-auth-launch',
+  ]) {
+    assert.equal(fs.existsSync(path.join(repositoryRoot, 'skills', oldName)), false);
+  }
 });

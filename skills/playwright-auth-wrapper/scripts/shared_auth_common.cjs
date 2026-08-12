@@ -1,3 +1,5 @@
+'use strict';
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -152,7 +154,84 @@ function loadPlaywright(authDir) {
   } catch (error) {
     failures.push(`local: ${error && error.message || error}`);
   }
-  throw new Error(`Playwright is unavailable. Run playwright-shared-auth-setup first. ${failures.join(' | ')}`);
+  throw new Error(`Playwright is unavailable. Run the Setup subflow of playwright-auth-wrapper first. ${failures.join(' | ')}`);
+}
+
+function inspectSharedAuth(options = {}) {
+  const paths = resolvePaths(options.authDir);
+  const issues = [];
+  let contextOptions;
+  let state;
+  let metadata;
+
+  for (const [name, file] of [
+    ['storage-state', paths.statePath],
+    ['context-options', paths.contextOptionsPath],
+    ['metadata', paths.metadataPath],
+  ]) {
+    if (!fs.existsSync(file)) {
+      issues.push(`missing-${name}`);
+      continue;
+    }
+    try {
+      const value = readJson(file);
+      if (name === 'storage-state') state = value;
+      if (name === 'context-options') contextOptions = value;
+      if (name === 'metadata') metadata = value;
+    } catch {
+      issues.push(`invalid-${name}`);
+    }
+  }
+
+  const storageStateValid = Boolean(state && Array.isArray(state.cookies) && Array.isArray(state.origins));
+  if (state && !storageStateValid) issues.push('invalid-storage-state-shape');
+
+  const contextStorageMatches = contextOptions?.storageState === paths.statePath;
+  if (contextOptions && !contextStorageMatches) {
+    issues.push('context-storage-state-path-mismatch');
+  }
+
+  const packageRoot = path.join(paths.runtimeDir, 'node_modules', 'playwright');
+  let installedVersion = null;
+  let chromiumInstalled = false;
+  try {
+    installedVersion = readJson(path.join(packageRoot, 'package.json')).version || null;
+    if (installedVersion !== PLAYWRIGHT_VERSION) issues.push('playwright-version-mismatch');
+    const playwright = require(packageRoot);
+    const executablePath = playwright.chromium?.executablePath?.();
+    chromiumInstalled = Boolean(executablePath && fs.existsSync(executablePath));
+    if (!chromiumInstalled) issues.push('chromium-not-installed');
+  } catch {
+    issues.push('playwright-runtime-missing');
+  }
+
+  const configurationReady = storageStateValid && contextStorageMatches && Boolean(metadata);
+  const runtimeReady = installedVersion === PLAYWRIGHT_VERSION && chromiumInstalled;
+  const cookieCount = storageStateValid ? state.cookies.length : 0;
+  const originCount = storageStateValid ? state.origins.length : 0;
+  return {
+    authDir: paths.authDir,
+    setupRequired: !configurationReady || !runtimeReady,
+    issues: [...new Set(issues)],
+    configuration: {
+      ready: configurationReady,
+      locale: contextOptions?.locale || null,
+      timezoneId: contextOptions?.timezoneId || null,
+      acceptLanguage: contextOptions?.extraHTTPHeaders?.['Accept-Language'] || null,
+      metadataPresent: Boolean(metadata),
+    },
+    runtime: {
+      ready: runtimeReady,
+      expectedVersion: PLAYWRIGHT_VERSION,
+      installedVersion,
+      chromiumInstalled,
+    },
+    authentication: {
+      hasSavedState: cookieCount > 0 || originCount > 0,
+      cookieCount,
+      originCount,
+    },
+  };
 }
 
 function isProcessAlive(pid) {
@@ -249,6 +328,7 @@ module.exports = {
   defaultAuthDir,
   ensureDir,
   ensureSharedAuth,
+  inspectSharedAuth,
   loadPlaywright,
   parseArgs,
   printJson,

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+'use strict';
+
 const path = require('path');
 const {
   PLAYWRIGHT_VERSION,
@@ -26,7 +28,7 @@ function commandWorks(command) {
   const { paths, contextOptions } = ensureSharedAuth({ authDir: args.authDir });
   if (!commandWorks('npm')) throw new Error('npm is required. Install Node.js LTS first.');
   writeJsonAtomic(path.join(paths.runtimeDir, 'package.json'), {
-    name: 'playwright-shared-auth-runtime',
+    name: 'playwright-auth-wrapper-runtime',
     private: true,
     dependencies: { playwright: PLAYWRIGHT_VERSION },
   });
