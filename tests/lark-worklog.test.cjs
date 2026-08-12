@@ -32,6 +32,28 @@ test('daily carry removes completed lines and preserves todos, progress, and leg
   );
 });
 
+test('day rollover plan always inserts before B and shifts the source exactly once', () => {
+  assert.deepEqual(
+    worklog.dayRolloverPlan({ sourceColumn: 'B', lastRow: 30 }),
+    {
+      insert: { position: 'B', count: 1, inherit_style: 'after' },
+      inserted_column: 'B',
+      source_column_before_insert: 'B',
+      source_column_after_insert: 'C',
+      format_source_range_after_insert: 'C1:C30',
+      target_range: 'B1:B30',
+    },
+  );
+  assert.equal(
+    worklog.dayRolloverPlan({ sourceColumn: 'AZ', lastRow: 2 }).source_column_after_insert,
+    'BA',
+  );
+  assert.throws(
+    () => worklog.dayRolloverPlan({ sourceColumn: 'A', lastRow: 30 }),
+    (error) => error.code === 'INVALID_SOURCE_COLUMN',
+  );
+});
+
 test('the helper is stateless and contains no Lark CLI adapter', () => {
   const source = fs.readFileSync(scriptPath, 'utf8');
   assert.doesNotMatch(source, /child_process|spawnSync|execFile|execSync|lark-cli/);
@@ -62,6 +84,8 @@ test('target discovery searches only current-user-created sheets with the litera
   }
   assert.match(format, /original-creator semantics/);
   assert.match(skill, /Never silently switch to a later result/);
+  assert.match(skill, /Do not call Drive search again in that conversation/);
+  assert.match(format, /Discover the workbook once per conversation/);
 });
 
 test('the workflow persists no local configuration and uses the required new-workbook title', () => {
@@ -83,4 +107,8 @@ test('the documented workflow retains rollover and task-creation safety invarian
   assert.match(source, /create a document in `my_library` before touching the sheet/);
   assert.match(source, /Never create a second document or delete the first one automatically/);
   assert.match(source, /Background colors are migration candidates, never task status/);
+  assert.match(source, /--position B --count 1 --inherit-style after/);
+  assert.match(source, /Never use `--position A` or `--position C`/);
+  assert.match(source, /never use `\+range-move` or `\+dim-delete`/);
+  assert.match(source, /automatic date\/month rollover.*slightly slower/si);
 });

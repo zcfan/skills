@@ -41,9 +41,59 @@ function printHelp() {
   process.stdout.write(
     'Usage:\n' +
     '  worklog-rules.cjs date\n' +
-    '  worklog-rules.cjs carry < previous-cell.txt\n\n' +
+    '  worklog-rules.cjs carry < previous-cell.txt\n' +
+    '  worklog-rules.cjs day-plan --source-column <B|C|...> --last-row <n>\n\n' +
     'This helper is stateless: it reads no configuration and writes no files.\n',
   );
+}
+
+function columnToIndex(column) {
+  const normalized = String(column || '').trim().toUpperCase();
+  if (!/^[A-Z]+$/.test(normalized)) {
+    throw new WorklogRulesError('INVALID_COLUMN', 'Column must contain only A-Z letters.');
+  }
+  let index = 0;
+  for (const character of normalized) index = index * 26 + character.charCodeAt(0) - 64;
+  return index - 1;
+}
+
+function indexToColumn(index) {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new WorklogRulesError('INVALID_COLUMN_INDEX', 'Column index must be a non-negative integer.');
+  }
+  let value = index + 1;
+  let column = '';
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    column = String.fromCharCode(65 + remainder) + column;
+    value = Math.floor((value - 1) / 26);
+  }
+  return column;
+}
+
+function dayRolloverPlan({ sourceColumn, lastRow }) {
+  const normalizedSource = String(sourceColumn || '').trim().toUpperCase();
+  const sourceIndex = columnToIndex(normalizedSource);
+  const normalizedLastRow = Number(lastRow);
+  if (sourceIndex < 1) {
+    throw new WorklogRulesError('INVALID_SOURCE_COLUMN', 'The source date column must be B or later.');
+  }
+  if (!Number.isInteger(normalizedLastRow) || normalizedLastRow < 2) {
+    throw new WorklogRulesError('INVALID_LAST_ROW', 'Last row must be an integer greater than or equal to 2.');
+  }
+  const shiftedSource = indexToColumn(sourceIndex + 1);
+  return {
+    insert: {
+      position: 'B',
+      count: 1,
+      inherit_style: 'after',
+    },
+    inserted_column: 'B',
+    source_column_before_insert: normalizedSource,
+    source_column_after_insert: shiftedSource,
+    format_source_range_after_insert: `${shiftedSource}1:${shiftedSource}${normalizedLastRow}`,
+    target_range: `B1:B${normalizedLastRow}`,
+  };
 }
 
 function dateIdentity(date = new Date()) {
@@ -105,6 +155,13 @@ function main(argv = process.argv.slice(2)) {
     outputJson({ value: carryDailyText(fs.readFileSync(0, 'utf8')) });
     return;
   }
+  if (command === 'day-plan') {
+    outputJson(dayRolloverPlan({
+      sourceColumn: options['source-column'],
+      lastRow: options['last-row'],
+    }));
+    return;
+  }
   throw new WorklogRulesError('UNKNOWN_COMMAND', 'Unknown command. Run with --help for usage.');
 }
 
@@ -126,7 +183,10 @@ if (require.main === module) {
 module.exports = {
   WorklogRulesError,
   carryDailyText,
+  columnToIndex,
   dateIdentity,
+  dayRolloverPlan,
+  indexToColumn,
   parseArguments,
   previousMonth,
 };

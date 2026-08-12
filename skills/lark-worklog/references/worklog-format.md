@@ -18,22 +18,23 @@ Read this reference before changing the spreadsheet or a linked task document. U
 
 ## Target discovery
 
-Keep no persistent local target configuration. Discover the workbook from live Drive search at the beginning of every work-log request.
+Keep no persistent local target configuration. Discover the workbook once per conversation, then reuse that exact target from conversation context.
 
-1. Load `lark-drive` and search as the authenticated user:
+1. If the current conversation already selected a workbook, reuse its URL or token without Drive search. Do not silently change it. Search again only when the user explicitly requests rediscovery or target switching; if the target becomes inaccessible, stop and report that fact.
+2. Otherwise load `lark-drive` and search as the authenticated user:
 
    ```bash
    lark-cli drive +search --query '[worklog]' --only-title \
      --doc-types sheet --created-by-me --page-size 20 --as user --format json
    ```
 
-2. `--created-by-me` uses original-creator semantics. Keep only spreadsheets originally created by the current logged-in user, then keep only results whose returned title contains the literal, case-sensitive substring `[worklog]`. Do not accept a broad semantic match such as `worklog` without brackets.
-3. Preserve API result order. The first exact match is the selected target. Continue pagination only until a second exact match is found or `has_more` becomes false; this is enough to decide whether the marker is unique.
-4. With one match, continue silently. With multiple matches, continue with the first but immediately identify its title and URL and warn that exactly one `[worklog]` spreadsheet is required for stable selection. Search ranking can change, so “first” is a fallback rather than a durable identity.
-5. With no match, ask the user to authorize creation of `工作日志 [worklog]` as the current user, or to identify an existing spreadsheet originally created by the same current user and authorize adding `[worklog]` to its title. A sheet created by another identity remains excluded even after renaming; offer to create a new sheet or an authorized copy instead. Do not remember or directly reuse a supplied URL as a future override.
-6. Load `lark-sheets` and validate the selected first result. If it is inaccessible or structurally invalid, stop and report it; do not silently fall through to a later candidate.
+3. `--created-by-me` uses original-creator semantics. Keep only spreadsheets originally created by the current logged-in user, then keep only results whose returned title contains the literal, case-sensitive substring `[worklog]`. Do not accept a broad semantic match such as `worklog` without brackets.
+4. Preserve API result order. The first exact match is the selected target. Continue pagination only until a second exact match is found or `has_more` becomes false; this is enough to decide whether the marker is unique.
+5. With one match, continue silently. With multiple matches, continue with the first but immediately identify its title and URL and warn that exactly one `[worklog]` spreadsheet is required for stable selection. Search ranking can change, so “first” is a fallback rather than a durable identity.
+6. With no match, ask the user to authorize creation of `工作日志 [worklog]` as the current user, or to identify an existing spreadsheet originally created by the same current user and authorize adding `[worklog]` to its title. A sheet created by another identity remains excluded even after renaming; offer to create a new sheet or an authorized copy instead. A supplied URL does not bypass these checks; after validation it may select the workbook for this conversation, but must not be saved locally.
+7. Load `lark-sheets` and validate the selected first result. If it is inaccessible or structurally invalid, stop and report it; do not silently fall through to a later candidate.
 
-Search operates only on resources visible to the current authenticated Lark identity, requires `search:docs:read`, and requires a user identity so `--created-by-me` can resolve its open ID. The official `lark-cli` may persist its own credentials and application configuration, but `lark-worklog` must not persist a URL, token, timezone, result order, or selected target.
+Search operates only on resources visible to the current authenticated Lark identity, requires `search:docs:read`, and requires a user identity so `--created-by-me` can resolve its open ID. The official `lark-cli` may persist its own credentials and application configuration, but `lark-worklog` must not write a URL, token, timezone, result order, or selected target to local storage. Conversation context is the only target cache.
 
 ## Workbook model
 
@@ -54,6 +55,10 @@ Search operates only on resources visible to the current authenticated Lark iden
 
 Complete both phases before processing every work-log maintenance request. Use live reads and make the process idempotent.
 
+For speed, remember the selected workbook and a successfully resolved current-month sheet ID only in the current conversation. While the local month is unchanged, the first read of each later request may combine A2, the complete date-header row, target task cells, and today's cells instead of repeating Drive search and workbook discovery. Fall back to full preflight if B1 is not today's unique header, A2 changes, the month changes, or any cached sheet ID fails. Never cache row numbers or daily column coordinates.
+
+If either phase needs a structural write, immediately send a short progress note before writing: explain that automatic date/month rollover plus read-back verification can make this request slightly slower than an ordinary log update, reassure the user that processing is continuing, and do not ask for an extra confirmation.
+
 ### Month rollover
 
 1. Use `lark-sheets +workbook-info` to list sheets and locate the current `YYYYMM`.
@@ -70,15 +75,23 @@ Complete both phases before processing every work-log maintenance request. Use l
 2. If today's date appears more than once, stop and ask the user to resolve the duplicate.
 3. If today's date already exists once, do not insert another column.
 4. Otherwise find the latest earlier date column that contains data. Do not create columns for skipped dates.
-5. Read its values, cell styles, borders, column width, and the relevant row heights using `lark-sheets`.
-6. Insert one column at B, preserving column A. Copy the source date column's dimensions and styles into the new B column according to the current official `lark-sheets` procedure.
-7. Set B1 to today's `YYYY/MM/DD EnglishWeekday` header. For rows 2 onward, carry `[]`, `[~]`, and unrecognized legacy lines; remove only lines beginning with `[x]` or `[X]`. The helper can transform one cell deterministically:
+5. Read its values, cell styles, borders, and column width using `lark-sheets`. Use `actual_range`, `row_indices`, and `col_indices`; never infer physical rows from the returned array indexes. Build a dense row-to-value map through the real last task row so blank source cells cannot shift later rows.
+6. Before writing, generate the deterministic coordinate plan:
+
+   ```bash
+   node <skill-directory>/scripts/worklog-rules.cjs day-plan \
+     --source-column <source-column-before-insert> --last-row <last-task-row>
+   ```
+
+7. Insert exactly one column before B with `+dim-insert --position B --count 1 --inherit-style after`. The CLI's `--position` is a before-position anchor: `B` creates the new B and shifts every former B-or-later column one place right. Never use `--position A` or `--position C`, never insert at C and move it afterward, and never use `+range-move` or `+dim-delete` to repair day rollover placement.
+8. After insertion, use the plan's shifted source coordinate. Copy formats only from that shifted source into B, set B's width from the pre-insert source width, and write the dense transformed value matrix once. Do not copy `all`: carrying values is an explicit transformation and must not copy stale values or formulas implicitly. Keep these ordered operations in one `+batch-update`.
+9. Set B1 to today's `YYYY/MM/DD EnglishWeekday` header. For rows 2 onward, carry `[]`, `[~]`, and unrecognized legacy lines; remove only lines beginning with `[x]` or `[X]`. The helper can transform one cell deterministically:
 
    ```bash
    printf '%s' '<previous-cell-text>' | node <skill-directory>/scripts/worklog-rules.cjs carry
    ```
 
-8. Re-read the complete new column and its structure. Verify the date, carried text, styles, borders, width, and row heights.
+10. Re-read A1:B through the last task row and the header row after the batch. Verify that column A's values, rich-text mentions, links, and backgrounds match the pre-insert snapshot exactly; verify B's date, dense carried text, styles, borders, and width. If the structural action did not report a single insertion at B, stop and report the discrepancy rather than attempting a move/delete repair.
 
 ## Creating a workbook
 
