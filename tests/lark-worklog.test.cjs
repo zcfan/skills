@@ -21,10 +21,10 @@ test('date helpers use the process-local calendar and cover year boundaries', ()
   );
 });
 
-test('daily carry removes completed lines and preserves todos, progress, and legacy text', () => {
+test('daily carry removes completed lines and preserves todos, progress, and unrecognized text', () => {
   assert.equal(
-    worklog.carryDailyText('[] todo\n[x] done\n[X] also done\n[~] progress\nlegacy note'),
-    '[] todo\n[~] progress\nlegacy note',
+    worklog.carryDailyText('[] todo\n[x] done\n[X] also done\n[~] progress\nplain note'),
+    '[] todo\n[~] progress\nplain note',
   );
 });
 

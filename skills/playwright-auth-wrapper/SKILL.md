@@ -7,7 +7,7 @@ description: Reuse one manually established Playwright login state across multip
 
 Enable one manual login to serve multiple parallel automation tasks. Every Launch reads the same saved authentication state into a fresh, isolated Browser Context and never writes that shared state.
 
-Route every request through one Skill while preserving strict state ownership:
+Select the appropriate subflow while preserving strict state ownership:
 
 - **Setup** creates configuration and installs the pinned private Playwright runtime.
 - **Login** is the only subflow allowed to write `storage-state.json`.

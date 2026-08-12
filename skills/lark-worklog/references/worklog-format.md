@@ -13,8 +13,7 @@ Read this reference before changing the spreadsheet or a linked task document. U
 7. [Task identity and metadata](#task-identity-and-metadata)
 8. [Creating a task](#creating-a-task)
 9. [Maintaining task documents](#maintaining-task-documents)
-10. [Legacy colors](#legacy-colors)
-11. [Verification and failures](#verification-and-failures)
+10. [Verification and failures](#verification-and-failures)
 
 ## Target discovery
 
@@ -31,8 +30,8 @@ Keep no persistent local target configuration. Discover the workbook once per co
 3. `--created-by-me` uses original-creator semantics. Keep only spreadsheets originally created by the current logged-in user, then keep only results whose returned title contains the literal, case-sensitive substring `[worklog]`. Do not accept a broad semantic match such as `worklog` without brackets.
 4. Preserve API result order. The first exact match is the selected target. Continue pagination only until a second exact match is found or `has_more` becomes false; this is enough to decide whether the marker is unique.
 5. With one match, continue silently. With multiple matches, continue with the first but immediately identify its title and URL and warn that exactly one `[worklog]` spreadsheet is required for stable selection. Search ranking can change, so “first” is a fallback rather than a durable identity.
-6. With no match, ask the user to authorize creation of `工作日志 [worklog]` as the current user, or to identify an existing spreadsheet originally created by the same current user and authorize adding `[worklog]` to its title. A sheet created by another identity remains excluded even after renaming; offer to create a new sheet or an authorized copy instead. A supplied URL does not bypass these checks; after validation it may select the workbook for this conversation, but must not be saved locally.
-7. Load `lark-sheets` and validate the selected first result. If it is inaccessible or structurally invalid, stop and report it; do not silently fall through to a later candidate.
+6. With no match, ask the user to authorize creation of `工作日志 [worklog]` as the current user. If the user explicitly requests another spreadsheet, validate its creator, literal title marker, and structure before selecting it for this conversation. Never save a supplied URL locally.
+7. Load `lark-sheets` and inspect the selected first result. If it is inaccessible, stop and report it. If its structure differs from the reference format, keep this target and follow the compatibility rules below; do not silently fall through to a later candidate.
 
 Search operates only on resources visible to the current authenticated Lark identity, requires `search:docs:read`, and requires a user identity so `--created-by-me` can resolve its open ID. The official `lark-cli` may persist its own credentials and application configuration, but `lark-worklog` must not write a URL, token, timezone, result order, or selected target to local storage. Conversation context is the only target cache.
 
@@ -83,19 +82,19 @@ If either phase needs a structural write, immediately send a short progress note
      --source-column <source-column-before-insert> --last-row <last-task-row>
    ```
 
-7. Insert exactly one column before B with `+dim-insert --position B --count 1 --inherit-style after`. The CLI's `--position` is a before-position anchor: `B` creates the new B and shifts every former B-or-later column one place right. Never use `--position A` or `--position C`, never insert at C and move it afterward, and never use `+range-move` or `+dim-delete` to repair day rollover placement.
+7. Insert exactly one column before B with `+dim-insert --position B --count 1 --inherit-style after`. The CLI's `--position` is a before-position anchor: `B` creates the new B and shifts the existing columns from B onward one place right. Use no other structural operation for day rollover.
 8. After insertion, use the plan's shifted source coordinate. Copy formats only from that shifted source into B, set B's width from the pre-insert source width, and write the dense transformed value matrix once. Do not copy `all`: carrying values is an explicit transformation and must not copy stale values or formulas implicitly. Keep these ordered operations in one `+batch-update`.
-9. Set B1 to today's `YYYY/MM/DD EnglishWeekday` header. For rows 2 onward, carry `[]`, `[~]`, and unrecognized legacy lines; remove only lines beginning with `[x]` or `[X]`. The helper can transform one cell deterministically:
+9. Set B1 to today's `YYYY/MM/DD EnglishWeekday` header. For rows 2 onward, carry `[]`, `[~]`, and unrecognized lines; remove only lines beginning with `[x]` or `[X]`. The helper can transform one cell deterministically:
 
    ```bash
    printf '%s' '<previous-cell-text>' | node <skill-directory>/scripts/worklog-rules.cjs carry
    ```
 
-10. Re-read A1:B through the last task row and the header row after the batch. Verify that column A's values, rich-text mentions, links, and backgrounds match the pre-insert snapshot exactly; verify B's date, dense carried text, styles, borders, and width. If the structural action did not report a single insertion at B, stop and report the discrepancy rather than attempting a move/delete repair.
+10. Re-read A1:B through the last task row and the header row after the batch. Verify that column A's values, rich-text mentions, links, and backgrounds match the pre-insert snapshot exactly; verify B's date, dense carried text, styles, borders, and width. If the structural action did not report a single insertion at B, stop and report the discrepancy.
 
 ## Creating a workbook
 
-Create a workbook only after explicit authorization. Compute the current month and date header from the Agent process's local clock. Do not read or manage the Playwright skills' browser timezone setting.
+Create a workbook only after explicit authorization. Compute the current month and date header from the Agent process's local clock.
 
 1. Use the official `lark-sheets +workbook-create` workflow as the current user to create a workbook titled `工作日志 [worklog]` with only the current `YYYYMM` sheet. Both the creator identity and marker are required for future discovery.
 2. Initialize A1 as empty, A2 as `杂项`, and B1 as today's date header. Apply the reference layout above and freeze row 1 and column A.
@@ -114,8 +113,7 @@ For each task row, collect:
 - primary document mention token and URL, if present;
 - `别名：` values;
 - explicit `状态：已完成` state;
-- today's daily text;
-- background color only as a neutral legacy-migration candidate.
+- today's daily text.
 
 Resolve a task by exact normalized title or alias when unique. For fuzzy or multiple matches, present at most three likely active tasks. After confirmation, add the exact expression the user used as an alias before applying the requested update.
 
@@ -190,17 +188,6 @@ Load `lark-doc` before every document operation:
 
 Fetch the changed section again and verify the new content and existing resources.
 
-## Legacy colors
-
-Background colors are migration candidates, never task status.
-
-1. Collect active rows whose A cell has a background.
-2. Present their task titles and colors and request row-by-row confirmation.
-3. Add `状态：已完成` only to confirmed tasks.
-4. Preserve every background exactly and ignore it for status afterward.
-
-Do not block ordinary maintenance on optional color migration unless a month rollover needs explicit completion states.
-
 ## Verification and failures
 
 - Before every write, identify the exact workbook, sheet ID, row, column, and range.
@@ -208,5 +195,6 @@ Do not block ordinary maintenance on optional color migration unless a month rol
 - Re-read every written range. For structural changes, also re-read workbook and sheet metadata.
 - Treat a failed batch as potentially partially applied even if current CLI documentation describes transactional behavior.
 - If today's header is duplicated, stop and ask the user to resolve it.
-- If the target lacks a usable monthly sheet or A2 is not `杂项`, request migration approval instead of reshaping it silently.
+- If the target differs from the reference format, map its rows, columns, task identities, dates, and statuses before acting. Continue compatibly when that mapping is unambiguous and the requested write does not require destructive reshaping.
+- If the mapping is ambiguous or the operation requires structural conversion, describe the mismatch and ask whether to convert the selected workbook or create a compliant one. A user's explicit request for a specific conversion is sufficient authorization for that conversion.
 - Follow `lark-shared` for authentication failures. Do not treat filesystem, Keychain, DNS, or timeout failures as expired credentials.

@@ -27,7 +27,7 @@ When `runtime.ready` is false, install the pinned private runtime and Chromium, 
 node <skill-directory>/scripts/install_playwright_chromium.cjs --auth-dir <optional-dir>
 ```
 
-Do not reinstall a ready runtime merely because configuration needed repair. The installer uses npm only inside the shared auth directory. A project-local Playwright package is a development fallback, not a successful user setup. If Chromium launch fails, use the script's JSON advice and reported missing library; do not assume every Linux distribution needs the same package.
+Do not reinstall a ready runtime merely because configuration needed repair. The installer uses npm only inside the shared auth directory. Readiness requires the pinned private runtime in that directory; a project-local Playwright package does not satisfy user setup. If Chromium launch fails, use the script's JSON advice and reported missing library; do not assume every Linux distribution needs the same package.
 
 Run the readiness check again and require `setupRequired: false`. Confirm that `storage-state.json`, `context-options.json`, and `metadata.json` exist with private permissions.
 

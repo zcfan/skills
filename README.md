@@ -52,7 +52,7 @@ If `lark-cli` or any required skill is missing, `lark-worklog` stops Lark operat
 npx @larksuite/cli@latest install
 ```
 
-Reload the agent after installation so it can discover the official skills. The recommended npm installation requires only Node.js; Go and Python 3 are needed only when building LarkSuite CLI from source.
+Reload the agent after installation so it can discover the official skills.
 
 `lark-worklog` stores no local configuration. On the first work-log request in each conversation, it uses the current authenticated Lark identity to find spreadsheets originally created by that user whose title contains the literal `[worklog]` marker:
 
@@ -61,9 +61,9 @@ lark-cli drive +search --query '[worklog]' --only-title \
   --doc-types sheet --created-by-me --page-size 20 --as user --format json
 ```
 
-Results are filtered again to require the literal `[worklog]` substring. With one match, the skill uses it directly. With multiple matches, it selects the first API result and warns that stable behavior requires exactly one matching spreadsheet. With no match, it asks whether to create a new spreadsheet with the fixed title `工作日志 [worklog]`, or to add the marker to an existing spreadsheet originally created by the same user. Renaming a spreadsheet created by another identity does not make it eligible; create or authorize a copy instead. Later work-log requests in the same conversation reuse the selected spreadsheet without searching again unless the user explicitly asks to switch or rediscover the target.
+Results are filtered again to require the literal `[worklog]` substring. With one match, the skill uses it directly. With multiple matches, it selects the first API result and warns that stable behavior requires exactly one matching spreadsheet. With no match, it asks for authorization to create a new spreadsheet with the fixed title `工作日志 [worklog]`. If the user explicitly wants to use another spreadsheet, the skill validates its creator and structure before proceeding. Later work-log requests in the same conversation reuse the selected spreadsheet without searching again unless the user explicitly asks to switch or rediscover the target.
 
-The skill never writes spreadsheet URLs, timezones, document tokens, or search results to local storage, and it does not read the Playwright skill's browser timezone. Conversation-local reuse exists only in the current conversation. The stateless `worklog-rules.cjs` helper uses the agent process's local time to generate dates, transform daily carry-over text, and produce an unambiguous column-insertion plan. Daily rollover always uses `--position B` to insert before column B; it never inserts at C and then repairs the position. When automatic daily or monthly rollover is required, the agent first explains that structural changes and read-back verification may make the request slightly slower, then continues. All Lark reads and writes are delegated to the official skills and verified by reading the result back. Application configuration and credentials persisted by `lark-cli` itself are outside `lark-worklog`'s local-state policy.
+The skill never writes spreadsheet URLs, timezones, document tokens, or search results to local storage. Workbook selection is reused only within the current conversation, and work-log dates use the agent process's local clock. Daily rollover inserts today's column before column B and verifies the resulting structure. When automatic daily or monthly rollover is required, the agent first explains that structural changes and read-back verification may make the request slightly slower, then continues. Authentication and application settings remain managed by `lark-cli`.
 
 For repository development on macOS or Linux, link every skill into the agent's skill directory:
 

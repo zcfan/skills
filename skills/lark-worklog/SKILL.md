@@ -24,7 +24,7 @@ If the binary or any required skill is unavailable, stop the work-log operation.
 npx @larksuite/cli@latest install
 ```
 
-Then explicitly offer to follow the official guide and perform the installation and verification for the user. Ask whether they want you to do that now, and do not run the installer until they agree. After installation, ask the user to reload the agent so the official skills become discoverable. Do not create local substitutes, copy the official skills into this skill, or silently fall back to raw OpenAPI calls. Once the dependencies exist, follow `lark-shared` for configuration and authorization rather than duplicating its login flow here.
+Then explicitly offer to follow the official guide and perform the installation and verification for the user. Ask whether they want you to do that now, and do not run the installer until they agree. After installation, ask the user to reload the agent so the official skills become discoverable. Once the dependencies exist, use their documented operations and follow `lark-shared` for configuration and authorization.
 
 ## Start or resume a work-log conversation
 
@@ -38,17 +38,15 @@ Then explicitly offer to follow the official guide and perform the installation 
    ```
 
 4. Treat `--created-by-me` as original-creator semantics: only spreadsheets created by the current logged-in user qualify, even if ownership later changed. Keep only results whose returned title actually contains the literal, case-sensitive substring `[worklog]`; search matching is broader than this final check. Preserve API result order. If necessary, follow `page_token` until a second exact match is found or results are exhausted.
-5. If no exact match exists, do not use an arbitrary spreadsheet. Ask whether to create `工作日志 [worklog]` as the current user, or ask the user to identify an existing spreadsheet originally created by the same current user and authorize adding `[worklog]` to its title. If an existing sheet was created by another identity, explain that renaming it will not make it discoverable under this policy; offer to create a new sheet or an authorized copy instead. A supplied link does not bypass the title or original-creator rules; after validation it may select the target for the current conversation but is never persisted locally.
+5. If no exact match exists, ask for authorization to create `工作日志 [worklog]` as the current user. If the user explicitly requests another spreadsheet, validate its creator, title marker, and structure before selecting it for the current conversation. A supplied link is never persisted locally.
 6. If exactly one match exists, select it for the rest of the conversation.
 7. If multiple matches exist, select the first exact match in API result order for the rest of the conversation, but tell the user which title and URL were selected and warn: stable behavior requires exactly one spreadsheet whose title contains `[worklog]`. Never silently switch to a later result because the first is malformed or inaccessible.
-8. Load `lark-sheets`, resolve the selected result, and verify the work-log structure. Stop and request migration approval if it is invalid.
+8. Load `lark-sheets`, resolve the selected result, and inspect its structure. If it differs from the reference format, assess whether the task and required cells can still be mapped unambiguously. Continue with a compatible interpretation when no destructive reshaping is needed. If the meaning is ambiguous or the requested operation requires conversion, describe the mismatch and ask whether to convert the workbook or create a compliant one. Never reshape it without explicit authorization.
 9. Compute the current work-log date from the Agent process's local clock:
 
    ```bash
    node <skill-directory>/scripts/worklog-rules.cjs date
    ```
-
-   Do not read, copy, or manage the Playwright skills' browser timezone setting. It is unrelated to work-log target discovery and date rollover.
 
 10. Read [references/worklog-format.md](references/worklog-format.md), then use `lark-sheets` to complete the monthly and daily preflight before interpreting the user's requested update.
 11. When preflight detects that a month or date rollover is required, immediately tell the user that the structural rollover and verification can make this request a little slower than an ordinary update, reassure them that work is continuing, and then proceed without asking for redundant permission.
@@ -75,7 +73,7 @@ Then explicitly offer to follow the official guide and perform the installation 
 
 ## Apply writes
 
-- Treat a clear maintenance request as authorization for its scoped Lark writes and automatic rollover. Ask again only for an ambiguous task, a structural migration, legacy-color interpretation, or an invalid target.
+- Treat a clear maintenance request as authorization for its scoped Lark writes and automatic rollover. Ask again only for an ambiguous task, an inaccessible target, or a structural conversion that is not already explicit in the request.
 - Follow the current `lark-sheets` instructions for every table operation, including style inheritance, stdin payloads, high-risk confirmation, and mandatory read-back verification.
 - Follow the current `lark-doc` instructions for every task-document operation. Create the document before inserting a new task row, and update existing documents surgically rather than overwriting them.
 - Never assume a failed batch rolled back every successful child operation. Parse per-operation results, re-read affected ranges, and reconcile actual state before retrying.
@@ -83,10 +81,10 @@ Then explicitly offer to follow the official guide and perform the installation 
 
 ## Respect boundaries
 
-- Never infer completion from background color; preserve all backgrounds unchanged.
+- Represent task completion only with an explicit `状态：已完成` line. Preserve background styles during ordinary maintenance.
 - Never delete completed rows from an active month. Delete explicitly completed rows only from a newly copied month before creating its first current-month date column.
 - Never copy an older month when the exact previous `YYYYMM` sheet is missing.
 - Never create skipped daily columns; create only today's column from the latest prior populated date.
 - Never modify A1. Leave it blank in a newly created workbook.
-- Keep no persistent local configuration for this skill. Do not write a spreadsheet URL, timezone, document token, task content, or target-selection cache to disk. Conversation-local target reuse is required for speed and is discarded with the conversation. Do not read Playwright configuration. The official `lark-cli` may persist its own authentication and application configuration according to `lark-shared`; that state is external to this skill.
+- Keep no persistent local configuration for this skill. Do not write a spreadsheet URL, timezone, document token, task content, or target-selection cache to disk. Conversation-local target reuse is required for speed and is discarded with the conversation. The official `lark-cli` may persist its own authentication and application configuration according to `lark-shared`; that state is external to this skill.
 - Scope the preflight to work-log requests. This skill is not a scheduler and does not run before unrelated conversations.
