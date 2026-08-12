@@ -14,11 +14,11 @@
 
 ### 独立 Skill
 
-- `lark-worklog`：使用官方 `lark-cli` 将零散待办、进展、任务文档和跨日/月滚动维护到结构化飞书工作日志中。
+- `lark-worklog`：编排飞书官方的 `lark-shared`、`lark-drive`、`lark-sheets` 和 `lark-doc` Skills，将零散待办、进展、任务文档和跨日/月滚动维护到结构化飞书工作日志中。
 
 ## 安装
 
-通用前置要求：Node.js 18 或更高版本。Playwright skills 还需要 npm；`lark-worklog` 需要已安装并登录的官方 [飞书 CLI](https://www.feishu.cn/feishu-cli)（`lark-cli`）。
+通用前置要求：Node.js 18 或更高版本。Playwright skills 还需要 npm。`lark-worklog` 的额外依赖见下方专节。
 
 使用支持 [skills](https://skills.sh/) 的 agent：
 
@@ -52,13 +52,33 @@ npx skills@latest update \
 
 首次使用浏览器认证前，先运行 `playwright-shared-auth-setup`。
 
-### 配置飞书工作日志
+### 使用飞书工作日志
 
-首次使用 `lark-worklog` 时，提供现有工作日志链接，或明确授权创建一张新表。默认表格链接只保存在当前用户的私有配置目录中，不会写入本仓库：
+`lark-worklog` 是工作流 Skill，不自行实现飞书客户端。它明确依赖飞书官方 [LarkSuite CLI](https://github.com/larksuite/cli) 提供的以下四个 Skills：
+
+- `lark-shared`：认证、身份、权限和错误处理。
+- `lark-drive`：按标题搜索当前登录用户创建的工作日志表格。
+- `lark-sheets`：工作簿、工作表、单元格、富文本和样式操作。
+- `lark-doc`：任务文档的创建、读取和局部更新。
+
+缺少 `lark-cli` 或其中任何一个 Skill 时，`lark-worklog` 会停止飞书操作并引导用户按照[官方安装与快速开始说明](https://github.com/larksuite/cli#installation--quick-start)安装。它还会主动询问用户是否需要 Agent 按官方文档自动完成安装与验证；获得明确同意前不会运行安装器。官方推荐命令是：
 
 ```bash
-node <skill-directory>/scripts/worklog.cjs configure --url <飞书表格或知识库链接> --timezone Asia/Shanghai
+npx @larksuite/cli@latest install
 ```
+
+安装后应重新加载 agent，使官方 Skills 可被发现。通过官方推荐的 npm 方式安装只需要 Node.js；Go 和 Python 3 仅在从源码构建 LarkSuite CLI 时需要。
+
+`lark-worklog` 不保存任何本地配置。每次触发时，它使用当前登录的飞书用户身份搜索由该用户创建、且标题包含字面量 `[worklog]` 的电子表格：
+
+```bash
+lark-cli drive +search --query '[worklog]' --only-title \
+  --doc-types sheet --created-by-me --page-size 20 --as user --format json
+```
+
+搜索结果还会按标题是否真正包含 `[worklog]` 做精确过滤。只有一个结果时直接使用；有多个结果时按搜索返回顺序使用第一个，同时提醒用户必须保证只有一个匹配表格，才能获得稳定效果；没有结果时会询问是否以当前用户身份创建标题固定为 `工作日志 [worklog]` 的新表，或给同一用户原始创建的已有表格补充该标题标记。其他身份创建的表格即使改名也不会被此规则选中，应新建或经授权复制一份。
+
+本 Skill 不保存表格 URL、时区、文档 token 或搜索结果，也不读取 Playwright Skills 的浏览器时区配置。无状态的 `worklog-rules.cjs` 只负责基于 Agent 运行环境本地时间生成日期，以及转换跨日文本。所有飞书读写均由 Agent 按上述官方 Skills 执行并回读验证。官方 `lark-cli` 自身保存的应用配置和认证凭证不属于 `lark-worklog` 的本地配置。
 
 开发本仓库时，也可以在 macOS/Linux 上把 skills 链接到 agent 的 skills 目录：
 
@@ -84,14 +104,14 @@ skills/
 
 - skill 目录名使用小写 kebab-case，并与 `SKILL.md` 的 `name` 一致。
 - `SKILL.md` 只保留触发条件、核心流程和必要约束；详细资料放到 `references/`。
-- 每个 skill 必须自包含，不得通过符号链接或相对路径依赖其他 skill。
+- 每个 skill 的仓库内资源必须自包含，不得通过符号链接或相对路径依赖其他 skill；外部二进制或官方 Skills 依赖必须在 `SKILL.md` 和本 README 中明确声明。
 - Skill 组是 README 中声明的安装与更新约定，不是额外的 skill，也不改变各成员的触发边界。
 - Playwright Skill 组内的 `shared_auth_common.cjs` 是刻意保留的相同副本，以满足独立安装要求；仓库校验会防止它们意外分叉。
 
 ## 安全模型
 
 - 登录态、token、cookie、认证截图和运行时配置均不得提交到仓库。
-- 工作日志表格链接、任务内容、关联文档 token 和 `lark-worklog` 本机配置不得提交到仓库。
+- 工作日志表格链接、任务内容和关联文档 token 不得提交到仓库；`lark-worklog` 不创建本机配置。
 - 默认认证目录在当前用户的数据目录中；POSIX 系统上目录权限为 `0700`，敏感文件为 `0600`。
 - Playwright 固定安装在认证目录下的私有 runtime 中，不修改全局 npm 环境。
 - login skill 只在用户为当前会话创建随机确认标记后保存状态；超时不会覆盖现有状态。

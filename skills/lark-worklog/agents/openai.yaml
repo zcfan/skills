@@ -1,4 +1,4 @@
 interface:
   display_name: "Lark Worklog"
-  short_description: "Maintain structured Lark work logs safely."
+  short_description: "Orchestrate official Lark skills for structured work logs."
   default_prompt: "Use $lark-worklog to record my todos and progress in my structured Lark work log."

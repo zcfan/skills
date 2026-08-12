@@ -1,60 +1,83 @@
 ---
 name: lark-worklog
-description: Maintain a structured personal work log in a Lark/Feishu spreadsheet with the official lark-cli. Use when the user records fragmented work todos or progress, marks work complete, adds task aliases, creates a new work-log task and its long-lived document, updates related links or design decisions, rolls the log into a new day or month, inspects the current work-log structure, configures a default work-log spreadsheet, or authorizes creation of a new one.
+description: Maintain a structured personal work log in a Lark/Feishu spreadsheet discovered by the literal [worklog] title marker, orchestrating the official lark-shared, lark-drive, lark-sheets, and lark-doc skills. Use when the user records fragmented work todos or progress, marks work complete, adds task aliases, creates a new work-log task and its long-lived document, updates related links or design decisions, rolls the log into a new day or month, inspects the current work-log structure, or authorizes creation of a new one.
 ---
 
 # Lark Worklog
 
-Use the official `lark-cli` as the only Lark interface. Use Node.js 18 or newer for the bundled script; do not introduce Python as a runtime dependency.
+Treat this as a workflow skill. Keep work-log policy here and delegate every Lark operation to the official LarkSuite skills and their `lark-cli` shortcuts. Never implement a second Lark client or invoke `lark-cli` from this skill's helper script.
+
+## Required official Lark skills
+
+Require all four official skills:
+
+- `lark-shared` — authentication, identity, scopes, credential persistence, and error handling.
+- `lark-drive` — title-based cloud search and resource discovery.
+- `lark-sheets` — workbook validation, sheet structure, cells, rich text, styles, and batch operations.
+- `lark-doc` — task-document creation, fetch, and surgical updates.
+
+Before any Lark read or write, confirm that `lark-cli` and all four skills are available in the current agent runtime. Load `lark-shared` first, then load `lark-drive`, `lark-sheets`, or `lark-doc` before using that domain.
+
+If the binary or any required skill is unavailable, stop the work-log operation. Tell the user that `lark-worklog` depends on the official LarkSuite CLI skill set and direct them to the [official installation guide](https://github.com/larksuite/cli#installation--quick-start). Recommend exactly:
+
+```bash
+npx @larksuite/cli@latest install
+```
+
+Then explicitly offer to follow the official guide and perform the installation and verification for the user. Ask whether they want you to do that now, and do not run the installer until they agree. After installation, ask the user to reload the agent so the official skills become discoverable. Do not create local substitutes, copy the official skills into this skill, or silently fall back to raw OpenAPI calls. Once the dependencies exist, follow `lark-shared` for configuration and authorization rather than duplicating its login flow here.
 
 ## Start every work-log request
 
-1. Run authenticated CLI commands only where the user's Lark credential store is writable. Check the existing login before starting a new authorization flow. Treat filesystem, Keychain, DNS, and timeout failures as environment failures rather than expired credentials.
-2. Locate this skill directory and run:
+1. Check the required dependencies above.
+2. Load `lark-drive` and search as the authenticated user for spreadsheet titles containing the literal, case-sensitive marker `[worklog]`:
 
    ```bash
-   node <skill-directory>/scripts/worklog.cjs prepare
-   node <skill-directory>/scripts/worklog.cjs inspect
+   lark-cli drive +search --query '[worklog]' --only-title \
+     --doc-types sheet --created-by-me --page-size 20 --as user --format json
    ```
 
-3. Run `prepare` before interpreting or writing the user's requested changes. It creates at most the current month and today's column, and is idempotent.
-4. Use `inspect` as the row and document-token source of truth. Never reuse a row number from an earlier read after inserting or deleting rows.
-5. Read [references/worklog-format.md](references/worklog-format.md) before any write, new-workbook creation, task-document creation, or legacy-color migration.
+3. Treat `--created-by-me` as original-creator semantics: only spreadsheets created by the current logged-in user qualify, even if ownership later changed. Keep only results whose returned title actually contains the literal, case-sensitive substring `[worklog]`; search matching is broader than this final check. Preserve API result order. If necessary, follow `page_token` until a second exact match is found or results are exhausted.
+4. If no exact match exists, do not use a remembered URL or an arbitrary spreadsheet. Ask whether to create `工作日志 [worklog]` as the current user, or ask the user to identify an existing spreadsheet originally created by the same current user and authorize adding `[worklog]` to its title. If an existing sheet was created by another identity, explain that renaming it will not make it discoverable under this policy; offer to create a new sheet or an authorized copy instead. A supplied link is not a persistent override; future requests still use title search.
+5. If exactly one match exists, use it.
+6. If multiple matches exist, select the first exact match in API result order and continue, but tell the user which title and URL were selected and warn: stable behavior requires exactly one spreadsheet whose title contains `[worklog]`. Never silently switch to a later result because the first is malformed or inaccessible.
+7. Load `lark-sheets`, resolve the selected result, and verify the work-log structure. Stop and request migration approval if it is invalid.
+8. Compute the current work-log date from the Agent process's local clock:
 
-If no target is configured, ask for a spreadsheet link or permission to create a new work log. After receiving a link, configure it:
+   ```bash
+   node <skill-directory>/scripts/worklog-rules.cjs date
+   ```
 
-```bash
-node <skill-directory>/scripts/worklog.cjs configure --url <spreadsheet-url> --timezone <iana-timezone>
-```
+   Do not read, copy, or manage the Playwright skills' browser timezone setting. It is unrelated to work-log target discovery and date rollover.
 
-An explicit valid link becomes the local default. Store no spreadsheet URL, document token, task content, or Lark credential inside the skill directory or another repository.
+9. Read [references/worklog-format.md](references/worklog-format.md), then use `lark-sheets` to complete the monthly and daily preflight before interpreting the user's requested update.
+10. Re-read the current sheet after preflight. Treat live workbook metadata and cells as the source of truth; never reuse row or column coordinates after a structural change.
 
 ## Interpret user input
 
 - Put unassigned fragments in row 2 (`杂项`).
-- Resolve task references against the primary title and `别名：` values from `inspect`.
+- Resolve task references against the primary title and `别名：` values read from column A.
 - Accept a unique title or alias match. For an uncertain match, present at most three likely tasks and wait for confirmation; then add the user's expression as an alias.
-- Use one logical item per line:
+- Use one logical daily item per line:
   - `[]` — open todo
   - `[x]` — completed item
   - `[~]` — progress or context that should carry to the next day
 - Treat task-level completion separately from daily `[x]` items. Add `状态：已完成` only when the user explicitly completes the whole task.
-- Keep links, PRDs, designs, decisions, and long-form context in the task's primary document. Keep the daily sheet concise.
+- Keep links, PRDs, designs, decisions, and long-form context in the primary task document. Keep the daily sheet concise.
 
 ## Apply writes
 
 - Treat a clear maintenance request as authorization for its scoped Lark writes and automatic rollover. Ask again only for an ambiguous task, a structural migration, legacy-color interpretation, or an invalid target.
-- Read the exact target cell and its rich text before writing. Preserve unrelated lines, mentions, hyperlinks, style, borders, row height, and background.
-- Combine multiple sheet mutations into one `lark-cli sheets +batch-update` request where useful, but never assume a failed batch rolled back every successful child operation. Parse per-operation results and re-read the affected rows before retrying. Pass large JSON through stdin.
-- Create a task document before inserting its row. If document creation fails, do not write the row. If any later sheet operation fails, report the created document URL, re-read the sheet, and resume with that same document; never create a duplicate or delete the first document automatically.
-- Update existing documents surgically with `docs +fetch` and block-level `docs +update`; never overwrite an existing document merely to add a link or decision.
-- Re-read every changed cell or document section and compare it with the intended result before reporting completion.
+- Follow the current `lark-sheets` instructions for every table operation, including style inheritance, stdin payloads, high-risk confirmation, and mandatory read-back verification.
+- Follow the current `lark-doc` instructions for every task-document operation. Create the document before inserting a new task row, and update existing documents surgically rather than overwriting them.
+- Never assume a failed batch rolled back every successful child operation. Parse per-operation results, re-read affected ranges, and reconcile actual state before retrying.
+- If document creation succeeds but a later sheet operation fails, retain and report that document URL. Resume with the same document; never create a duplicate or delete the first document automatically.
 
 ## Respect boundaries
 
-- Never infer completion from background color. `inspect` exposes colored rows only for one-time, user-confirmed migration; preserve those colors unchanged.
-- Never delete completed rows from an active month. `prepare` deletes explicitly completed rows only in a newly copied month sheet before its first current-month date column is created.
-- Never silently copy an older month when the exact previous `YYYYMM` sheet is missing.
+- Never infer completion from background color; preserve all backgrounds unchanged.
+- Never delete completed rows from an active month. Delete explicitly completed rows only from a newly copied month before creating its first current-month date column.
+- Never copy an older month when the exact previous `YYYYMM` sheet is missing.
 - Never create skipped daily columns; create only today's column from the latest prior populated date.
 - Never modify A1. Leave it blank in a newly created workbook.
+- Keep no persistent local configuration for this skill. Do not store a spreadsheet URL, timezone, document token, task content, or target-selection cache. Do not read Playwright configuration. The official `lark-cli` may persist its own authentication and application configuration according to `lark-shared`; that state is external to this skill.
 - Scope the preflight to work-log requests. This skill is not a scheduler and does not run before unrelated conversations.
