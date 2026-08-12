@@ -7,6 +7,7 @@ const scriptPath = path.resolve(__dirname, '../skills/lark-worklog/scripts/workl
 const skillPath = path.resolve(__dirname, '../skills/lark-worklog/SKILL.md');
 const formatPath = path.resolve(__dirname, '../skills/lark-worklog/references/worklog-format.md');
 const readmePath = path.resolve(__dirname, '../README.md');
+const readmeZhPath = path.resolve(__dirname, '../README.zh-CN.md');
 const worklog = require(scriptPath);
 
 test('date helpers use the process-local calendar and cover year boundaries', () => {
@@ -89,13 +90,16 @@ test('target discovery searches only current-user-created sheets with the litera
 });
 
 test('the workflow persists no local configuration and uses the required new-workbook title', () => {
-  const sources = [skillPath, formatPath, readmePath].map((file) => fs.readFileSync(file, 'utf8'));
+  const sources = [skillPath, formatPath, readmePath, readmeZhPath].map((file) => fs.readFileSync(file, 'utf8'));
   for (const source of sources) {
     assert.doesNotMatch(source, /worklog-state\.cjs|default_spreadsheet_url|LARK_WORKLOG_CONFIG_DIR/);
   }
   assert.match(sources[0], /Keep no persistent local configuration/);
   assert.match(sources[1], /titled `工作日志 \[worklog\]`/);
-  assert.match(sources[2], /标题固定为 `工作日志 \[worklog\]`/);
+  assert.match(sources[2], /fixed title `工作日志 \[worklog\]`/);
+  assert.match(sources[3], /标题固定为 `工作日志 \[worklog\]`/);
+  assert.match(sources[2], /\[简体中文\]\(README\.zh-CN\.md\)/);
+  assert.match(sources[3], /\[English\]\(README\.md\)/);
 });
 
 test('the documented workflow retains rollover and task-creation safety invariants', () => {

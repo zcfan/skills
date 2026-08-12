@@ -1,69 +1,71 @@
-# Personal skills
+# Personal Skills
 
-我的个人 Codex / agent skills。每个 `skills/<name>/` 目录都是一个可独立识别和运行的 skill。
+**English** | [简体中文](README.zh-CN.md)
 
-## 当前 skills
+My personal Codex and agent skills. Each `skills/<name>/` directory is an independently discoverable and runnable skill.
 
-- `playwright-auth-wrapper`：按用户意图路由 Setup、Login 和 Launch 子流程；首次使用自动安装，日常默认只读复用登录态。
-- `lark-worklog`：编排飞书官方的 `lark-shared`、`lark-drive`、`lark-sheets` 和 `lark-doc` Skills，将零散待办、进展、任务文档和跨日/月滚动维护到结构化飞书工作日志中。
+## Included Skills
 
-## 安装
+- `playwright-auth-wrapper`: Routes Setup, Login, and Launch based on the user's intent. It installs automatically on first use and defaults to read-only authentication reuse for everyday browser work.
+- `lark-worklog`: Orchestrates the official `lark-shared`, `lark-drive`, `lark-sheets`, and `lark-doc` skills to maintain fragmented todos, progress, task documents, and daily or monthly rollovers in a structured Lark work log.
 
-通用前置要求：Node.js 18 或更高版本。Playwright Skill 还需要 npm。`lark-worklog` 的额外依赖见下方专节。
+## Installation
 
-使用支持 [skills](https://skills.sh/) 的 agent：
+General prerequisite: Node.js 18 or later. The Playwright skill also requires npm. See the dedicated section below for the additional `lark-worklog` dependencies.
+
+With an agent that supports [skills](https://skills.sh/):
 
 ```bash
 npx skills@latest add zcfan/skills
 ```
 
-安装器会让你选择需要的 skill 和目标 agent。
+The installer will ask which skill and target agent to use.
 
-### 安装 Playwright Auth Wrapper
+### Install Playwright Auth Wrapper
 
-Setup、Login 和 Launch 已合并为一个 Skill，使用一条命令安装：
+Setup, Login, and Launch are combined into one skill:
 
 ```bash
 npx skills@latest add zcfan/skills --skill playwright-auth-wrapper
 ```
 
-它会先执行只读状态检查，并按以下优先级选择子流程：
+The skill starts with a read-only readiness check and routes requests in this order:
 
-- 尚未初始化：自动运行 Setup，安装固定版本的 Playwright 和 Chromium；完成后询问是否继续登录。
-- 明确要求登录或刷新过期状态：运行 Login。只有该子流程能够写入 `storage-state.json`。
-- 其他打开网页、截图和自动化请求：默认运行只读 Launch。每个任务创建独立 Browser Context，可并行读取同一登录态。
+- Not initialized: automatically run Setup to install the pinned Playwright version and Chromium, then ask whether to continue with Login.
+- Explicit login or expired-state refresh request: run Login. This is the only subflow allowed to write `storage-state.json`.
+- Any other page opening, screenshot, or browser automation request: default to read-only Launch. Each task creates an isolated Browser Context, so multiple tasks can safely read the same authentication state in parallel.
 
-从旧版三个 Skills 升级时，先安装新的 `playwright-auth-wrapper`，再移除 `playwright-shared-auth-setup`、`playwright-shared-auth-login` 和 `playwright-shared-auth-launch`。共享认证目录和文件格式保持不变，已有登录态无需迁移。
+When upgrading from the former three-skill layout, install `playwright-auth-wrapper`, then remove `playwright-shared-auth-setup`, `playwright-shared-auth-login`, and `playwright-shared-auth-launch`. The shared authentication directory and file formats are unchanged, so existing login state requires no migration.
 
-### 使用飞书工作日志
+### Use Lark Worklog
 
-`lark-worklog` 是工作流 Skill，不自行实现飞书客户端。它明确依赖飞书官方 [LarkSuite CLI](https://github.com/larksuite/cli) 提供的以下四个 Skills：
+`lark-worklog` is a workflow skill and does not implement its own Lark client. It explicitly depends on these four official skills from [LarkSuite CLI](https://github.com/larksuite/cli):
 
-- `lark-shared`：认证、身份、权限和错误处理。
-- `lark-drive`：按标题搜索当前登录用户创建的工作日志表格。
-- `lark-sheets`：工作簿、工作表、单元格、富文本和样式操作。
-- `lark-doc`：任务文档的创建、读取和局部更新。
+- `lark-shared`: Authentication, identity, permissions, and error handling.
+- `lark-drive`: Title-based discovery of work-log spreadsheets created by the current authenticated user.
+- `lark-sheets`: Workbook, worksheet, cell, rich-text, and style operations.
+- `lark-doc`: Task-document creation, reading, and surgical updates.
 
-缺少 `lark-cli` 或其中任何一个 Skill 时，`lark-worklog` 会停止飞书操作并引导用户按照[官方安装与快速开始说明](https://github.com/larksuite/cli#installation--quick-start)安装。它还会主动询问用户是否需要 Agent 按官方文档自动完成安装与验证；获得明确同意前不会运行安装器。官方推荐命令是：
+If `lark-cli` or any required skill is missing, `lark-worklog` stops Lark operations and directs the user to the [official installation and quick-start guide](https://github.com/larksuite/cli#installation--quick-start). It also offers to follow the official guide and perform installation and verification automatically, but never runs the installer without explicit approval. The recommended command is:
 
 ```bash
 npx @larksuite/cli@latest install
 ```
 
-安装后应重新加载 agent，使官方 Skills 可被发现。通过官方推荐的 npm 方式安装只需要 Node.js；Go 和 Python 3 仅在从源码构建 LarkSuite CLI 时需要。
+Reload the agent after installation so it can discover the official skills. The recommended npm installation requires only Node.js; Go and Python 3 are needed only when building LarkSuite CLI from source.
 
-`lark-worklog` 不保存任何本地配置。每个会话第一次触发时，它使用当前登录的飞书用户身份搜索由该用户创建、且标题包含字面量 `[worklog]` 的电子表格：
+`lark-worklog` stores no local configuration. On the first work-log request in each conversation, it uses the current authenticated Lark identity to find spreadsheets originally created by that user whose title contains the literal `[worklog]` marker:
 
 ```bash
 lark-cli drive +search --query '[worklog]' --only-title \
   --doc-types sheet --created-by-me --page-size 20 --as user --format json
 ```
 
-搜索结果还会按标题是否真正包含 `[worklog]` 做精确过滤。只有一个结果时直接使用；有多个结果时按搜索返回顺序使用第一个，同时提醒用户必须保证只有一个匹配表格，才能获得稳定效果；没有结果时会询问是否以当前用户身份创建标题固定为 `工作日志 [worklog]` 的新表，或给同一用户原始创建的已有表格补充该标题标记。其他身份创建的表格即使改名也不会被此规则选中，应新建或经授权复制一份。同一会话中的后续工作日志请求会直接复用已选中的表格，不再重复搜索；只有显式切换或重新发现目标时才会再次搜索。
+Results are filtered again to require the literal `[worklog]` substring. With one match, the skill uses it directly. With multiple matches, it selects the first API result and warns that stable behavior requires exactly one matching spreadsheet. With no match, it asks whether to create a new spreadsheet with the fixed title `工作日志 [worklog]`, or to add the marker to an existing spreadsheet originally created by the same user. Renaming a spreadsheet created by another identity does not make it eligible; create or authorize a copy instead. Later work-log requests in the same conversation reuse the selected spreadsheet without searching again unless the user explicitly asks to switch or rediscover the target.
 
-本 Skill 不把表格 URL、时区、文档 token 或搜索结果写入本地存储，也不读取 Playwright Skills 的浏览器时区配置。会话内复用仅存在于当前对话上下文，结束会话即丢弃。无状态的 `worklog-rules.cjs` 只负责基于 Agent 运行环境本地时间生成日期、转换跨日文本，以及生成无歧义的日期插列坐标计划。日期滚动固定使用 `--position B`（在 B 列之前插入），不会先插入 C 再移动修复。检测到自动日期或月份滚动时，Agent 会先提醒这次请求因结构调整和回读校验可能稍慢，然后继续处理。所有飞书读写均由 Agent 按上述官方 Skills 执行并回读验证。官方 `lark-cli` 自身保存的应用配置和认证凭证不属于 `lark-worklog` 的本地配置。
+The skill never writes spreadsheet URLs, timezones, document tokens, or search results to local storage, and it does not read the Playwright skill's browser timezone. Conversation-local reuse exists only in the current conversation. The stateless `worklog-rules.cjs` helper uses the agent process's local time to generate dates, transform daily carry-over text, and produce an unambiguous column-insertion plan. Daily rollover always uses `--position B` to insert before column B; it never inserts at C and then repairs the position. When automatic daily or monthly rollover is required, the agent first explains that structural changes and read-back verification may make the request slightly slower, then continues. All Lark reads and writes are delegated to the official skills and verified by reading the result back. Application configuration and credentials persisted by `lark-cli` itself are outside `lark-worklog`'s local-state policy.
 
-开发本仓库时，也可以在 macOS/Linux 上把 skills 链接到 agent 的 skills 目录：
+For repository development on macOS or Linux, link every skill into the agent's skill directory:
 
 ```bash
 skills_dir="${AGENT_SKILLS_DIR:-$HOME/.agents/skills}"
@@ -73,41 +75,41 @@ for skill_dir in skills/*; do
 done
 ```
 
-## 目录约定
+## Repository Layout
 
 ```text
 skills/
 └── <skill-name>/
-    ├── SKILL.md            # 必需：触发条件和工作流
-    ├── agents/openai.yaml  # 推荐：界面展示信息
-    ├── scripts/            # 可选：确定性脚本
-    ├── references/         # 可选：按需加载的详细资料
-    └── assets/             # 可选：生成输出时使用的资源
+    ├── SKILL.md            # Required: triggers and core workflow
+    ├── agents/openai.yaml  # Recommended: UI metadata
+    ├── scripts/            # Optional: deterministic helpers
+    ├── references/         # Optional: detailed, on-demand instructions
+    └── assets/             # Optional: reusable output assets
 ```
 
-- skill 目录名使用小写 kebab-case，并与 `SKILL.md` 的 `name` 一致。
-- `SKILL.md` 只保留触发条件、核心流程和必要约束；详细资料放到 `references/`。
-- 每个 skill 的仓库内资源必须自包含，不得通过符号链接或相对路径依赖其他 skill；外部二进制或官方 Skills 依赖必须在 `SKILL.md` 和本 README 中明确声明。
+- Use lowercase kebab-case for skill directory names and match the `name` in `SKILL.md`.
+- Keep triggers, the core workflow, and essential constraints in `SKILL.md`; place detailed instructions in `references/`.
+- Keep every skill self-contained. Do not use symlinks or relative paths to depend on another repository skill. Declare external binaries and official skill dependencies in both `SKILL.md` and this README.
 
-## 安全模型
+## Security Model
 
-- 登录态、token、cookie、认证截图和运行时配置均不得提交到仓库。
-- 工作日志表格链接、任务内容和关联文档 token 不得提交到仓库；`lark-worklog` 不创建本机配置。
-- 默认认证目录在当前用户的数据目录中；POSIX 系统上目录权限为 `0700`，敏感文件为 `0600`。
-- Playwright 固定安装在认证目录下的私有 runtime 中，不修改全局 npm 环境。
-- Login 子流程只在用户为当前会话创建随机确认标记后保存状态；超时不会覆盖现有状态。
-- 日志和 metadata 中的 URL 会移除凭证、查询参数与 fragment。
+- Never commit login state, tokens, cookies, authentication screenshots, or runtime configuration.
+- Never commit work-log spreadsheet URLs, task content, or linked document tokens. `lark-worklog` creates no local configuration.
+- Store authentication data in the current user's data directory. On POSIX systems, directories use mode `0700` and sensitive files use `0600`.
+- Install the pinned Playwright runtime privately inside the authentication directory without modifying the global npm environment.
+- Save state from the Login subflow only after the user creates the session-specific confirmation marker. A timeout never overwrites existing state.
+- Remove credentials, query parameters, and fragments from URLs in logs and metadata.
 
-安全问题请按照 [SECURITY.md](SECURITY.md) 私下报告。
+Report security issues privately through [SECURITY.md](SECURITY.md).
 
-## 开发与校验
+## Development and Validation
 
 ```bash
 node scripts/validate-skills.cjs
 node --test
 ```
 
-贡献约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## License
 
