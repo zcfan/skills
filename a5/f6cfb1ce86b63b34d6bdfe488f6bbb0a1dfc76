@@ -1,0 +1,29 @@
+README.md
+  s_92632415ea35a1::t_267f66a280fff0 72,79,81
+skills/lark-worklog/SKILL.md
+  s_92632415ea35a1::t_8e0f1fedb763c7 29,31-33,40-45,53-62,91
+skills/lark-worklog/references/worklog-format.md
+  s_92632415ea35a1::t_e2f180d6abfe68 21,23-24,31-35,37,58-61,78-88,94
+skills/lark-worklog/scripts/worklog-rules.cjs
+  s_92632415ea35a1::t_9171afdf01f30c 44-45,50-98,158-164,186,188-189
+tests/lark-worklog.test.cjs
+  s_92632415ea35a1::t_7b94f0b9dc7940 35-56,87-88,110-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a5f6cfb1ce86b63b34d6bdfe488f6bbb0a1dfc76",
+  "prompts": {},
+  "sessions": {
+    "s_92632415ea35a1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff0fd-fec7-7321-b5b1-c778ea76a403",
+        "model": "unknown"
+      },
+      "human_author": "zcfan <zcfan@users.noreply.github.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
