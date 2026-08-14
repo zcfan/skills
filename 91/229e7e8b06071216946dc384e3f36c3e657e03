@@ -1,0 +1,41 @@
+README.md
+  s_92632415ea35a1::t_96abcf65701c50 14,32-42,46,48,109-110
+README.zh-CN.md
+  s_92632415ea35a1::t_c42d1db8eb1c1f 14,32-42,46,48,109-110
+skills/playwright-auth-wrapper/SKILL.md
+  s_92632415ea35a1::t_5264181d3daaf6 3,8,10,12,14-21,23,25-33,35-37,39,43-50,52
+skills/playwright-auth-wrapper/agents/openai.yaml
+  s_92632415ea35a1::t_32b3d8b491c62b 3-4
+skills/playwright-auth-wrapper/references/launch.md
+  s_92632415ea35a1::t_2e56152dab888a 3,6-7,12-30,32-34,36
+skills/playwright-auth-wrapper/references/login.md
+  s_92632415ea35a1::t_0a6ec3b18272b5 3,5,8-9,12,14-23,25-30,32,34-37
+skills/playwright-auth-wrapper/references/setup.md
+  s_92632415ea35a1::t_6cfd015d168671 3,5,7,9,12-14,17,19-21,24,27,29
+skills/playwright-auth-wrapper/scripts/login_and_save_state.cjs
+  s_92632415ea35a1::t_19d403e32b03d7 8-10,12,14,16-17,23-26,29-55,58-63,66-74,77-79,81-98,101,106-141
+skills/playwright-auth-wrapper/scripts/open_with_shared_state.cjs
+  s_92632415ea35a1::t_cf520e08221b85 4-61,63-66,68-70
+skills/playwright-auth-wrapper/scripts/shared_auth_common.cjs
+  s_92632415ea35a1::t_a49f50b2ebf0ac 6,10,80-90,93-106,115,123,127-130,138-139,152-159,161-167,169-175,177,179-201,207,223,233-235,237,239-241,243,248-249,257,266-301,355,389,391-393,395,397,400,403,411
+tests/shared-auth-common.test.cjs
+  s_92632415ea35a1::t_85ba78e8e14372 8-9,15-28,35,39-45,48,52-81,86-91,94,97-98,102-111,113-114,116-118,120-133,171-212,214-233,236-250,252-258,260-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "91229e7e8b06071216946dc384e3f36c3e657e03",
+  "prompts": {},
+  "sessions": {
+    "s_92632415ea35a1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff0fd-fec7-7321-b5b1-c778ea76a403",
+        "model": "unknown"
+      },
+      "human_author": "zcfan <zcfan@users.noreply.github.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
