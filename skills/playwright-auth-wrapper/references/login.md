@@ -1,23 +1,37 @@
 # Login
 
-Use Login only when the user explicitly asks to add, refresh, or replace shared browser authentication. This is the only subflow that may write `storage-state.json`.
+Use Login only when the user explicitly asks to establish, refresh, or replace shared browser authentication. Login uses a named `playwright-cli` session and saves state only after the user confirms that login is complete.
 
-## Run Login
+## Start
 
 ```bash
-node <skill-directory>/scripts/login_and_save_state.cjs --url <target-login-or-app-url>
+node <skill-directory>/scripts/login_and_save_state.cjs start \
+  --url "https://example.com/login"
 ```
 
-Useful options:
+This opens a headed CLI session and returns `sessionName` plus its command prefix. Leave it running. The user can log in manually; when the Agent must interact with the page, use the returned session with the official `playwright-cli` Skill:
 
-- `--headed`: show a visible browser when a desktop is available.
-- `--timeout-ms <ms>`: extend the human-login window.
-- `--auth-dir <dir>`: use the same non-default directory selected during Setup.
-- `--screenshot <path>`: choose the screenshot path; the default is a private OS temporary directory.
-- `--auto-authorize --authorize-host <exact-hostname>`: allow common authorization buttons on one exact host. Never enable this implicitly.
+```bash
+playwright-cli -s=<sessionName> snapshot
+playwright-cli -s=<sessionName> click <target>
+```
 
-Load existing `storageState` first so login is incremental. When the script emits `ready-for-user`, show the screenshot in headless mode and let the user complete login. Use headed mode when typing or interaction is required.
+Run those commands from the same working directory used to start the session.
 
-Only after the user explicitly confirms completion, create the session-specific `saveMarkerPath` emitted by that process. Never reuse a marker from another login. The script then saves state and metadata atomically under the writer lock.
+## Save or cancel
 
-If the process times out, report that nothing was saved. Start a new Login only when requested.
+Only after the user explicitly confirms that login is complete, save the session:
+
+```bash
+node <skill-directory>/scripts/login_and_save_state.cjs save \
+  --session <sessionName>
+```
+
+The save command writes to a temporary file, validates the result, atomically replaces the shared state under the writer lock, and closes the login session. If saving fails, the existing state remains unchanged.
+
+If the user cancels, close without saving:
+
+```bash
+node <skill-directory>/scripts/login_and_save_state.cjs cancel \
+  --session <sessionName>
+```

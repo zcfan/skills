@@ -11,7 +11,7 @@
 
 ## 安装
 
-通用前置要求：Node.js 18 或更高版本。Playwright Skill 还需要 npm。`lark-worklog` 的额外依赖见下方专节。
+通用前置要求：Node.js 18 或更高版本。每个 Skill 的外部依赖见下方对应专节。
 
 使用支持 [skills](https://skills.sh/) 的 agent：
 
@@ -29,13 +29,23 @@ npx skills@latest add zcfan/skills
 npx skills@latest add zcfan/skills --skill playwright-auth-wrapper
 ```
 
-它的核心作用是：只需手动登录一次并保存登录态，之后即可并行启动多个相互隔离的 Playwright 自动化实例。每个实例只读复用同一份登录态，但使用独立的 Browser Context，因此并发任务不会共享可写的浏览器 Profile，也不会覆盖登录态。
+它同时依赖官方 [`@playwright/cli`](https://github.com/microsoft/playwright-cli) 命令和该 CLI 配套的官方 `playwright-cli` Skill：
+
+```bash
+npm install -g @playwright/cli@latest
+playwright-cli install --skills=agents
+playwright-cli install-browser chromium
+```
+
+如果缺少任一依赖，`playwright-auth-wrapper` 会提供官方安装说明和适用的推荐命令，并询问是否需要 Agent 自动执行这些步骤；未获得明确同意前不会安装。如果新安装的配套 Skill 没有被立即发现，应重新加载 Agent。
+
+它的核心作用是：只需手动登录一次并保存登录态，之后即可并行启动多个相互隔离的 `playwright-cli` 会话。Launch 会返回唯一的会话名并保持浏览器运行；Agent 随后按照官方 `playwright-cli` Skill，在同一会话中完成导航、交互、检查、结果采集以及最终关闭。
 
 它会先执行只读状态检查，并按以下优先级选择子流程：
 
-- 尚未初始化：自动运行 Setup，安装固定版本的 Playwright 和 Chromium；完成后询问是否继续登录。
+- 配置或依赖缺失：运行 Setup，并在必要时提议安装官方 CLI、配套 Skill 和 Chromium。
 - 明确要求登录或刷新过期状态：运行 Login。只有该子流程能够写入 `storage-state.json`。
-- 其他打开网页、截图和自动化请求：默认运行只读 Launch。每个任务创建独立 Browser Context，可并行读取同一登录态。
+- 其他打开网页、截图和自动化请求：默认运行只读 Launch。Wrapper 只打开带登录态的具名会话并把会话名交给 Agent，不自动截图或关闭。每个任务获得独立会话，可并行读取同一登录态。
 
 ### 使用飞书工作日志
 
@@ -96,8 +106,8 @@ skills/
 - 登录态、token、cookie、认证截图和运行时配置均不得提交到仓库。
 - 工作日志表格链接、任务内容和关联文档 token 不得提交到仓库；`lark-worklog` 不创建本机配置。
 - 默认认证目录在当前用户的数据目录中；POSIX 系统上目录权限为 `0700`，敏感文件为 `0600`。
-- Playwright 固定安装在认证目录下的私有 runtime 中，不修改全局 npm 环境。
-- Login 子流程只在用户为当前会话创建随机确认标记后保存状态；超时不会覆盖现有状态。
+- 只有获得明确授权后，才按照官方项目说明安装 Playwright CLI 及其配套 Skill。
+- Login 子流程只在用户确认手动登录完成后保存状态；先校验临时导出的状态，再原子替换已有状态。
 - 日志和 metadata 中的 URL 会移除凭证、查询参数与 fragment。
 
 安全问题请按照 [SECURITY.md](SECURITY.md) 私下报告。

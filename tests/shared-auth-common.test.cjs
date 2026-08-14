@@ -2,15 +2,28 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
 const test = require('node:test');
 
-const repositoryRoot = path.resolve(__dirname, '..');
-const skillRoot = path.join(repositoryRoot, 'skills', 'playwright-auth-wrapper');
 const common = require('../skills/playwright-auth-wrapper/scripts/shared_auth_common.cjs');
+const launcher = require('../skills/playwright-auth-wrapper/scripts/open_with_shared_state.cjs');
+const login = require('../skills/playwright-auth-wrapper/scripts/login_and_save_state.cjs');
 
 function temporaryDirectory() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'shared-auth-test-'));
+}
+
+function readyDependencies(command = 'playwright-cli') {
+  return {
+    ready: true,
+    cli: { ready: true, command, version: '0.0.0-test', error: null },
+    skill: { ready: true, path: '/test/playwright-cli/SKILL.md' },
+    install: {
+      url: common.PLAYWRIGHT_CLI_INSTALL_URL,
+      cli: 'npm install -g @playwright/cli@latest',
+      skill: 'playwright-cli install --skills=agents',
+      browser: 'playwright-cli install-browser chromium',
+    },
+  };
 }
 
 test('the wrapper preserves the existing shared-auth data directory', () => {
@@ -19,58 +32,105 @@ test('the wrapper preserves the existing shared-auth data directory', () => {
   assert.equal(path.basename(path.dirname(authDir)), 'playwright-auth');
 });
 
-test('ensureSharedAuth preserves configured context options', () => {
+test('ensureSharedAuth creates a Playwright CLI config that reads shared state', () => {
   const authDir = temporaryDirectory();
   common.configureSharedAuth({ authDir, locale: 'en-US', timezoneId: 'UTC', acceptLanguage: 'en-US' });
   const result = common.ensureSharedAuth({ authDir });
-  assert.equal(result.contextOptions.locale, 'en-US');
-  assert.equal(result.contextOptions.timezoneId, 'UTC');
-  assert.equal(result.contextOptions.extraHTTPHeaders['Accept-Language'], 'en-US');
+  const context = result.cliConfig.browser.contextOptions;
+  assert.equal(result.cliConfig.browser.browserName, 'chromium');
+  assert.equal(result.cliConfig.browser.isolated, true);
+  assert.equal(context.storageState, result.paths.statePath);
+  assert.equal(context.locale, 'en-US');
+  assert.equal(context.timezoneId, 'UTC');
+  assert.equal(context.extraHTTPHeaders['Accept-Language'], 'en-US');
 });
 
-test('configureSharedAuth changes only explicitly provided options', () => {
+test('configureSharedAuth changes only explicitly provided context options', () => {
   const authDir = temporaryDirectory();
   common.configureSharedAuth({ authDir, locale: 'en-US', timezoneId: 'UTC', acceptLanguage: 'en-US' });
   const result = common.configureSharedAuth({ authDir, locale: 'fr-FR' });
-  assert.equal(result.contextOptions.locale, 'fr-FR');
-  assert.equal(result.contextOptions.timezoneId, 'UTC');
-  assert.equal(result.contextOptions.extraHTTPHeaders['Accept-Language'], 'en-US');
+  const context = result.cliConfig.browser.contextOptions;
+  assert.equal(context.locale, 'fr-FR');
+  assert.equal(context.timezoneId, 'UTC');
+  assert.equal(context.extraHTTPHeaders['Accept-Language'], 'en-US');
+});
+
+test('readiness rejects a flat context-options file that playwright-cli cannot consume', () => {
+  const scratch = temporaryDirectory();
+  const authDir = path.join(scratch, 'auth');
+  const { paths } = common.ensureSharedAuth({ authDir });
+  fs.writeFileSync(paths.contextOptionsPath, JSON.stringify({
+    storageState: paths.statePath,
+    locale: 'zh-CN',
+  }));
+  const status = common.inspectSharedAuth({
+    authDir,
+    cliCommand: path.join(scratch, 'missing-playwright-cli'),
+    cwd: scratch,
+    homeDir: scratch,
+  });
+  assert.equal(status.configuration.ready, false);
+  assert.match(status.issues.join(','), /invalid-playwright-cli-config-shape/);
+  assert.throws(
+    () => launcher.launchSession({
+      authDir,
+      dependencies: readyDependencies(),
+      runCommand: () => assert.fail('must not invoke CLI with an invalid config'),
+    }),
+    (error) => error.code === 'PLAYWRIGHT_CLI_CONFIG_NOT_READY',
+  );
 });
 
 test('readiness inspection detects first use without creating local state', () => {
   const authDir = path.join(temporaryDirectory(), 'not-created');
-  const status = common.inspectSharedAuth({ authDir });
+  const status = common.inspectSharedAuth({
+    authDir,
+    cliCommand: path.join(authDir, 'missing-playwright-cli'),
+    cwd: authDir,
+    homeDir: authDir,
+  });
   assert.equal(status.setupRequired, true);
   assert.equal(status.configuration.ready, false);
-  assert.equal(status.runtime.ready, false);
+  assert.equal(status.dependencies.ready, false);
   assert.equal(status.authentication.hasSavedState, false);
   assert.match(status.issues.join(','), /missing-storage-state/);
-  assert.match(status.issues.join(','), /playwright-runtime-missing/);
+  assert.match(status.issues.join(','), /playwright-cli-not-found/);
+  assert.match(status.issues.join(','), /playwright-cli-skill-missing/);
   assert.equal(fs.existsSync(authDir), false);
 });
 
-test('readiness inspection accepts a configured pinned runtime and Chromium', () => {
-  const authDir = temporaryDirectory();
+test('readiness requires both the official CLI and companion Skill', { skip: process.platform === 'win32' }, () => {
+  const scratch = temporaryDirectory();
+  const authDir = path.join(scratch, 'auth');
+  const workspace = path.join(scratch, 'workspace');
+  const cli = path.join(scratch, 'playwright-cli');
+  const skill = path.join(workspace, '.agents', 'skills', 'playwright-cli', 'SKILL.md');
+  fs.mkdirSync(path.dirname(skill), { recursive: true });
+  fs.writeFileSync(skill, '---\nname: playwright-cli\n---\n');
+  fs.writeFileSync(cli, '#!/bin/sh\nprintf "Version 0.1.0-test\\n"\n');
+  fs.chmodSync(cli, 0o755);
   common.ensureSharedAuth({ authDir });
-  const packageRoot = path.join(authDir, 'runtime', 'node_modules', 'playwright');
-  const executablePath = path.join(authDir, 'runtime', 'chromium-test');
-  fs.mkdirSync(packageRoot, { recursive: true });
-  fs.writeFileSync(executablePath, 'browser');
-  fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({
-    name: 'playwright',
-    version: common.PLAYWRIGHT_VERSION,
-    main: 'index.js',
-  }));
-  fs.writeFileSync(
-    path.join(packageRoot, 'index.js'),
-    `module.exports = { chromium: { executablePath: () => ${JSON.stringify(executablePath)} } };\n`,
-  );
-  const status = common.inspectSharedAuth({ authDir });
+
+  const status = common.inspectSharedAuth({ authDir, cliCommand: cli, cwd: workspace, homeDir: scratch });
   assert.equal(status.setupRequired, false);
-  assert.equal(status.configuration.ready, true);
-  assert.equal(status.runtime.ready, true);
+  assert.equal(status.dependencies.cli.ready, true);
+  assert.equal(status.dependencies.skill.ready, true);
+  assert.equal(status.dependencies.skill.path, skill);
   assert.deepEqual(status.issues, []);
-  assert.equal(status.runtime.chromiumInstalled, true);
+});
+
+test('missing dependency error contains the official guide and recommended commands', () => {
+  const dependencies = {
+    ...readyDependencies(),
+    ready: false,
+    cli: { ready: false, command: 'playwright-cli', version: null, error: 'playwright-cli-not-found' },
+    skill: { ready: false, path: null },
+  };
+  const error = common.dependencyError(dependencies);
+  assert.equal(error.code, 'PLAYWRIGHT_CLI_DEPENDENCY_MISSING');
+  assert.match(error.message, /github\.com\/microsoft\/playwright-cli/);
+  assert.match(error.message, /npm install -g @playwright\/cli@latest/);
+  assert.match(error.message, /playwright-cli install --skills=agents/);
 });
 
 test('auth artifacts use private POSIX permissions', { skip: process.platform === 'win32' }, () => {
@@ -80,14 +140,6 @@ test('auth artifacts use private POSIX permissions', { skip: process.platform ==
   assert.equal(fs.statSync(paths.statePath).mode & 0o777, 0o600);
   assert.equal(fs.statSync(paths.contextOptionsPath).mode & 0o777, 0o600);
   assert.equal(fs.statSync(paths.metadataPath).mode & 0o777, 0o600);
-});
-
-test('temporary screenshots use private POSIX permissions', { skip: process.platform === 'win32' }, () => {
-  const screenshot = common.createPrivateTempFile('shared-auth-test', 'page.png');
-  fs.writeFileSync(screenshot, 'image');
-  common.protectPrivateFile(screenshot);
-  assert.equal(fs.statSync(path.dirname(screenshot)).mode & 0o777, 0o700);
-  assert.equal(fs.statSync(screenshot).mode & 0o777, 0o600);
 });
 
 test('sanitizeUrl removes credentials, query, and fragment', () => {
@@ -116,52 +168,115 @@ test('login lock recovers an old corrupt lock file', () => {
   assert.equal(fs.existsSync(lockPath), false);
 });
 
-test('loadPlaywright prefers the private shared runtime', () => {
+test('Launch opens a named playwright-cli session and leaves it running for the Agent', () => {
   const authDir = temporaryDirectory();
-  const packageRoot = path.join(authDir, 'runtime', 'node_modules', 'playwright');
-  fs.mkdirSync(packageRoot, { recursive: true });
-  fs.writeFileSync(path.join(packageRoot, 'index.js'), 'module.exports = { marker: "shared-runtime-playwright" };\n');
-  fs.writeFileSync(path.join(packageRoot, 'package.json'), '{"name":"playwright","version":"0.0.0-test","main":"index.js"}\n');
-  const loaded = common.loadPlaywright(authDir);
-  assert.equal(loaded.source, 'shared-runtime');
-  assert.equal(loaded.playwright.marker, 'shared-runtime-playwright');
+  const calls = [];
+  const result = launcher.launchSession({
+    authDir,
+    session: 'agent-work',
+    url: 'https://example.test/app?secret=hidden#fragment',
+    headed: true,
+    dependencies: readyDependencies('/test/playwright-cli'),
+    runCommand: (command, args, options) => calls.push({ command, args, options }),
+  });
+
+  const { paths } = common.ensureSharedAuth({ authDir });
+  assert.equal(result.sessionName, 'agent-work');
+  assert.equal(result.initialUrl, 'https://example.test/app');
+  assert.equal(result.stateReadOnly, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, '/test/playwright-cli');
+  assert.deepEqual(calls[0].args, [
+    '-s=agent-work',
+    'open',
+    'https://example.test/app?secret=hidden#fragment',
+    `--config=${paths.contextOptionsPath}`,
+    '--headed',
+  ]);
+  assert.ok(!calls[0].args.includes('close'));
+  assert.ok(!calls[0].args.includes('screenshot'));
 });
 
-test('login timeout does not overwrite storage state', () => {
-  const scratch = temporaryDirectory();
-  const authDir = path.join(scratch, 'auth');
-  const packageRoot = path.join(authDir, 'runtime', 'node_modules', 'playwright');
-  fs.mkdirSync(packageRoot, { recursive: true });
-  fs.writeFileSync(path.join(packageRoot, 'package.json'), '{"name":"playwright","version":"0.0.0-test","main":"index.js"}\n');
-  fs.writeFileSync(path.join(packageRoot, 'index.js'), `
-const fs = require('fs');
-const page = {
-  goto: async () => {},
-  waitForTimeout: async () => {},
-  screenshot: async ({ path }) => { fs.writeFileSync(path, 'screenshot'); },
-  url: () => 'https://example.test/login?code=must-not-leak#token',
-  title: async () => 'Login',
-  locator: () => ({ first: () => ({ count: async () => 0, isVisible: async () => false }) }),
-};
-const context = {
-  newPage: async () => page,
-  storageState: async () => ({ cookies: [{ name: 'should-not-save' }], origins: [] }),
-  close: async () => {},
-};
-module.exports = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
-`);
-  common.ensureSharedAuth({ authDir });
-  const statePath = path.join(authDir, 'storage-state.json');
-  const before = fs.readFileSync(statePath, 'utf8');
-  const loginScript = path.join(skillRoot, 'scripts', 'login_and_save_state.cjs');
-  const result = spawnSync(process.execPath, [loginScript, '--url', 'https://example.test/login?code=must-not-leak', '--auth-dir', authDir, '--timeout-ms', '1'], {
-    encoding: 'utf8',
-    env: process.env,
-  });
-  assert.equal(result.status, 3, result.stderr || result.stdout);
-  assert.match(result.stdout, /"event": "timeout"/);
-  assert.match(result.stdout, /SAVE_NOW-[0-9a-f-]{36}/);
-  assert.doesNotMatch(result.stdout, /must-not-leak/);
-  assert.equal(fs.readFileSync(statePath, 'utf8'), before);
-  assert.equal(fs.existsSync(path.join(authDir, 'storage-state.lock')), false);
+test('Launch rejects unsafe session names before invoking playwright-cli', () => {
+  assert.throws(
+    () => launcher.launchSession({
+      authDir: temporaryDirectory(),
+      session: 'bad session; close-all',
+      dependencies: readyDependencies(),
+      runCommand: () => assert.fail('must not invoke CLI'),
+    }),
+    /Session names must be/,
+  );
 });
+
+test('Login start opens a headed named CLI session without saving state', () => {
+  const authDir = temporaryDirectory();
+  const calls = [];
+  const { paths } = common.ensureSharedAuth({ authDir });
+  const before = fs.readFileSync(paths.statePath, 'utf8');
+  const result = login.startLogin({
+    authDir,
+    session: 'login-one',
+    url: 'https://example.test/login?secret=hidden',
+    dependencies: readyDependencies(),
+    runCommand: (command, args) => calls.push({ command, args }),
+  });
+  assert.equal(result.sessionName, 'login-one');
+  assert.equal(result.saved, false);
+  assert.deepEqual(calls[0].args, [
+    '-s=login-one',
+    'open',
+    'https://example.test/login?secret=hidden',
+    `--config=${paths.contextOptionsPath}`,
+    '--headed',
+  ]);
+  assert.equal(fs.readFileSync(paths.statePath, 'utf8'), before);
+});
+
+test('Login save validates, atomically stores, and closes a CLI session', () => {
+  const authDir = temporaryDirectory();
+  const calls = [];
+  const state = {
+    cookies: [{ name: 'session', value: 'secret', domain: 'example.test', path: '/' }],
+    origins: [{ origin: 'https://example.test', localStorage: [] }],
+  };
+  const result = login.saveLogin({
+    authDir,
+    session: 'login-one',
+    dependencies: readyDependencies(),
+    runCommand: (command, args) => {
+      calls.push({ command, args });
+      if (args[1] === 'state-save') fs.writeFileSync(args[2], JSON.stringify(state));
+    },
+  });
+
+  const { paths } = common.ensureSharedAuth({ authDir });
+  assert.deepEqual(readJson(paths.statePath), state);
+  assert.deepEqual(calls.map(({ args }) => args[1]), ['state-save', 'close']);
+  assert.equal(result.cookieCount, 1);
+  assert.equal(result.originCount, 1);
+  assert.equal(fs.existsSync(paths.lockPath), false);
+});
+
+test('Login save leaves existing state unchanged when CLI export is invalid', () => {
+  const authDir = temporaryDirectory();
+  const { paths } = common.ensureSharedAuth({ authDir });
+  const before = fs.readFileSync(paths.statePath, 'utf8');
+  const commands = [];
+  assert.throws(() => login.saveLogin({
+    authDir,
+    session: 'login-one',
+    dependencies: readyDependencies(),
+    runCommand: (command, args) => {
+      commands.push(args[1]);
+      if (args[1] === 'state-save') fs.writeFileSync(args[2], '{"cookies":[]}');
+    },
+  }), /invalid storage state/);
+  assert.equal(fs.readFileSync(paths.statePath, 'utf8'), before);
+  assert.deepEqual(commands, ['state-save']);
+  assert.equal(fs.existsSync(paths.lockPath), false);
+});
+
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}

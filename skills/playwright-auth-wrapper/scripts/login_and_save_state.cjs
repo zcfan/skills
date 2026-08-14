@@ -2,134 +2,140 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
 const { randomUUID } = require('crypto');
 const {
   acquireLock,
-  createPrivateTempFile,
+  assertCliConfigReady,
+  createSessionName,
+  dependencyError,
   ensureSharedAuth,
-  loadPlaywright,
+  inspectPlaywrightDependencies,
   parseArgs,
+  playwrightCliArgs,
   printJson,
-  protectPrivateFile,
-  resolvePaths,
+  readJson,
+  run,
   sanitizeError,
   sanitizeUrl,
   writeJsonAtomic,
 } = require('./shared_auth_common.cjs');
 
-const args = parseArgs(process.argv.slice(2));
-const url = args.url || process.env.PLAYWRIGHT_SHARED_LOGIN_URL;
-if (!url) {
-  console.error('Usage: playwright-auth-wrapper login --url <login-or-target-url> [--headed] [--timeout-ms <ms>] [--screenshot <path>]');
-  process.exit(2);
+function requireDependencies(options) {
+  const dependencies = options.dependencies || inspectPlaywrightDependencies(options);
+  if (!dependencies.ready) throw dependencyError(dependencies);
+  return dependencies;
 }
 
-const timeoutMs = Number(args.timeoutMs || process.env.PLAYWRIGHT_SHARED_LOGIN_TIMEOUT_MS || 12 * 60 * 1000);
-const screenshot = args.screenshot || process.env.PLAYWRIGHT_SHARED_LOGIN_SCREENSHOT || createPrivateTempFile('playwright-login', 'login.png');
-const statusScreenshot = args.statusScreenshot || process.env.PLAYWRIGHT_SHARED_STATUS_SCREENSHOT || createPrivateTempFile('playwright-login-status', 'status.png');
-const headless = args.headed ? false : process.env.PLAYWRIGHT_HEADLESS !== '0';
-const autoAuthorize = args.autoAuthorize === true;
-const authorizeHost = typeof args.authorizeHost === 'string' ? args.authorizeHost.toLowerCase() : null;
-
-if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('--timeout-ms must be a positive number');
-if (autoAuthorize && !authorizeHost) throw new Error('--auto-authorize requires --authorize-host <exact-hostname>');
-
-async function clickCommonAuthorization(page) {
-  const currentHost = new URL(page.url()).hostname.toLowerCase();
-  if (!autoAuthorize || currentHost !== authorizeHost) return null;
-  const selectors = [
-    'button:has-text("允许")',
-    'button:has-text("授权")',
-    'button:has-text("同意")',
-    'button:has-text("确认")',
-    'button:has-text("继续")',
-    'button:has-text("Allow")',
-    'button:has-text("Authorize")',
-    'button:has-text("Continue")',
-  ];
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if (await locator.count().catch(() => 0) && await locator.isVisible().catch(() => false)) {
-      await locator.click({ timeout: 5000 });
-      return selector;
-    }
-  }
-  return null;
+function startLogin(options = {}) {
+  if (!options.url) throw new Error('Login start requires --url <login-or-target-url>.');
+  const dependencies = requireDependencies(options);
+  const { paths, cliConfig } = ensureSharedAuth({ authDir: options.authDir });
+  assertCliConfigReady(cliConfig, paths);
+  const sessionName = options.session || createSessionName('shared-auth-login');
+  const cliArgs = playwrightCliArgs(sessionName, 'open', [
+    options.url,
+    `--config=${paths.contextOptionsPath}`,
+    '--headed',
+  ]);
+  const runCommand = options.runCommand || run;
+  runCommand(dependencies.cli.command, cliArgs, {
+    stdio: options.stdio || 'inherit',
+    cwd: options.cwd,
+    env: { NO_UPDATE_NOTIFIER: '1' },
+  });
+  return {
+    ok: true,
+    event: 'ready-for-user',
+    sessionName,
+    url: sanitizeUrl(options.url),
+    commandPrefix: `${dependencies.cli.command} -s=${sessionName}`,
+    saveCommand: `node <skill-directory>/scripts/login_and_save_state.cjs save --session ${sessionName}`,
+    cancelCommand: `node <skill-directory>/scripts/login_and_save_state.cjs cancel --session ${sessionName}`,
+    saved: false,
+  };
 }
 
-async function main() {
-  const unresolvedPaths = resolvePaths(args.authDir);
+function saveLogin(options = {}) {
+  if (!options.session) throw new Error('Login save requires --session <name> from Login start.');
+  const dependencies = requireDependencies(options);
+  const { paths } = ensureSharedAuth({ authDir: options.authDir });
+  const runCommand = options.runCommand || run;
+  const temporaryStatePath = `${paths.statePath}.${randomUUID()}.tmp`;
   let releaseLock;
-  let browser;
-  let context;
-  let saveMarkerPath;
   try {
-    releaseLock = acquireLock(unresolvedPaths.lockPath);
-
-    const { paths, contextOptions } = ensureSharedAuth({ authDir: args.authDir });
-    saveMarkerPath = path.join(paths.authDir, `SAVE_NOW-${randomUUID()}`);
-    const { playwright, source } = loadPlaywright(paths.authDir);
-    browser = await playwright.chromium.launch({ headless });
-    context = await browser.newContext({ ...contextOptions, storageState: paths.statePath, viewport: { width: 1440, height: 1000 } });
-    const page = await context.newPage();
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await fs.promises.mkdir(path.dirname(screenshot), { recursive: true });
-    await fs.promises.mkdir(path.dirname(statusScreenshot), { recursive: true });
-    await page.screenshot({ path: screenshot, fullPage: true });
-    protectPrivateFile(screenshot);
-    printJson({ event: 'ready-for-user', url: sanitizeUrl(page.url()), screenshot, statePath: paths.statePath, saveMarkerPath, playwrightSource: source });
-
-    const deadline = Date.now() + timeoutMs;
-    let lastUrl = page.url();
-    let confirmed = false;
-    while (Date.now() < deadline) {
-      await page.waitForTimeout(2000);
-      const current = page.url();
-      if (current !== lastUrl) {
-        lastUrl = current;
-        printJson({ event: 'url', url: sanitizeUrl(current) });
-        await page.screenshot({ path: statusScreenshot, fullPage: true }).catch(() => null);
-        protectPrivateFile(statusScreenshot);
-      }
-      const clicked = await clickCommonAuthorization(page);
-      if (clicked) printJson({ event: 'clicked', selector: clicked, url: sanitizeUrl(current) });
-      if (fs.existsSync(saveMarkerPath)) {
-        confirmed = true;
-        break;
-      }
+    releaseLock = acquireLock(paths.lockPath);
+    runCommand(
+      dependencies.cli.command,
+      playwrightCliArgs(options.session, 'state-save', [temporaryStatePath]),
+      { stdio: options.stdio || 'inherit', cwd: options.cwd, env: { NO_UPDATE_NOTIFIER: '1' } },
+    );
+    const state = readJson(temporaryStatePath);
+    if (!Array.isArray(state.cookies) || !Array.isArray(state.origins)) {
+      throw new Error('playwright-cli returned an invalid storage state. Shared state was not changed.');
     }
-
-    if (!confirmed) {
-      printJson({ event: 'timeout', saved: false, statePath: paths.statePath });
-      process.exitCode = 3;
-      return;
-    }
-
-    const state = await context.storageState();
     writeJsonAtomic(paths.statePath, state);
-    const oldMeta = fs.existsSync(paths.metadataPath) ? JSON.parse(fs.readFileSync(paths.metadataPath, 'utf8')) : {};
-    const { lastUrl: _lastUrl, lastTitle: _lastTitle, ...safeOldMeta } = oldMeta;
-    const meta = {
-      ...safeOldMeta,
+    const oldMetadata = readJson(paths.metadataPath);
+    const metadata = {
+      ...oldMetadata,
       updatedAt: new Date().toISOString(),
-      lastUrl: sanitizeUrl(page.url()),
-      cookieCount: state.cookies?.length ?? 0,
-      originCount: state.origins?.length ?? 0,
-      cookieDomains: [...new Set((state.cookies ?? []).map((cookie) => cookie.domain))].sort(),
+      cookieCount: state.cookies.length,
+      originCount: state.origins.length,
+      cookieDomains: [...new Set(state.cookies.map((cookie) => cookie.domain).filter(Boolean))].sort(),
     };
-    writeJsonAtomic(paths.metadataPath, meta);
-    printJson({ event: 'saved', statePath: paths.statePath, metadataPath: paths.metadataPath, ...meta });
+    writeJsonAtomic(paths.metadataPath, metadata);
+    runCommand(
+      dependencies.cli.command,
+      playwrightCliArgs(options.session, 'close'),
+      { stdio: options.stdio || 'inherit', cwd: options.cwd, env: { NO_UPDATE_NOTIFIER: '1' } },
+    );
+    return {
+      ok: true,
+      event: 'saved',
+      sessionName: options.session,
+      statePath: paths.statePath,
+      metadataPath: paths.metadataPath,
+      cookieCount: metadata.cookieCount,
+      originCount: metadata.originCount,
+    };
   } finally {
-    if (saveMarkerPath) fs.rmSync(saveMarkerPath, { force: true });
-    if (context) await context.close().catch(() => null);
-    if (browser) await browser.close().catch(() => null);
+    fs.rmSync(temporaryStatePath, { force: true });
     if (releaseLock) releaseLock();
   }
 }
 
-main().catch((error) => {
-  printJson({ ok: false, error: sanitizeError(error), statusScreenshot });
-  process.exit(1);
-});
+function cancelLogin(options = {}) {
+  if (!options.session) throw new Error('Login cancel requires --session <name> from Login start.');
+  const dependencies = requireDependencies(options);
+  const runCommand = options.runCommand || run;
+  runCommand(
+    dependencies.cli.command,
+    playwrightCliArgs(options.session, 'close'),
+    { stdio: options.stdio || 'inherit', cwd: options.cwd, env: { NO_UPDATE_NOTIFIER: '1' } },
+  );
+  return { ok: true, event: 'cancelled', sessionName: options.session, saved: false };
+}
+
+function main(argv = process.argv.slice(2)) {
+  const args = parseArgs(argv);
+  const action = args._[0] || 'start';
+  const options = {
+    authDir: args.authDir,
+    session: args.session,
+    url: args.url,
+  };
+  if (action === 'start') return printJson(startLogin(options));
+  if (action === 'save') return printJson(saveLogin(options));
+  if (action === 'cancel') return printJson(cancelLogin(options));
+  throw new Error('Usage: login_and_save_state.cjs <start|save|cancel> [options].');
+}
+
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    printJson({ ok: false, error: sanitizeError(error) });
+    process.exit(1);
+  }
+}
+
+module.exports = { cancelLogin, main, saveLogin, startLogin };

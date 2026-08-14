@@ -1,34 +1,70 @@
 #!/usr/bin/env node
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const { createPrivateTempFile, loadPlaywright, resolvePaths, parseArgs, printJson, protectPrivateFile, sanitizeError, sanitizeUrl } = require('./shared_auth_common.cjs');
-const args = parseArgs(process.argv.slice(2));
-const url = args._[0] || args.url;
-if (!url) { console.error('Usage: playwright-auth-wrapper launch <url> [screenshotPath] [--auth-dir <dir>]'); process.exit(2); }
-const screenshotPath = args._[1] || args.screenshot || createPrivateTempFile('playwright-auth-wrapper', 'page.png');
-const paths = resolvePaths(args.authDir);
+const {
+  assertCliConfigReady,
+  createSessionName,
+  dependencyError,
+  ensureSharedAuth,
+  inspectPlaywrightDependencies,
+  parseArgs,
+  playwrightCliArgs,
+  printJson,
+  run,
+  sanitizeError,
+  sanitizeUrl,
+} = require('./shared_auth_common.cjs');
 
-(async () => {
-  const options = JSON.parse(fs.readFileSync(paths.contextOptionsPath, 'utf8'));
-  const { playwright, source } = loadPlaywright(paths.authDir);
-  const { chromium } = playwright;
-  const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== '0' });
-  let context;
+function launchSession(options = {}) {
+  const dependencies = options.dependencies || inspectPlaywrightDependencies(options);
+  if (!dependencies.ready) throw dependencyError(dependencies);
+
+  const { paths, cliConfig } = ensureSharedAuth({ authDir: options.authDir });
+  assertCliConfigReady(cliConfig, paths);
+  const sessionName = options.session || createSessionName('shared-auth');
+  const commandArgs = [];
+  if (options.url) commandArgs.push(options.url);
+  commandArgs.push(`--config=${paths.contextOptionsPath}`);
+  if (options.headed) commandArgs.push('--headed');
+
+  const cliArgs = playwrightCliArgs(sessionName, 'open', commandArgs);
+  const runCommand = options.runCommand || run;
+  runCommand(dependencies.cli.command, cliArgs, {
+    stdio: options.stdio || 'inherit',
+    cwd: options.cwd,
+    env: { NO_UPDATE_NOTIFIER: '1' },
+  });
+
+  return {
+    ok: true,
+    event: 'session-ready',
+    sessionName,
+    initialUrl: options.url ? sanitizeUrl(options.url) : 'about:blank',
+    commandPrefix: `${dependencies.cli.command} -s=${sessionName}`,
+    closeCommand: `${dependencies.cli.command} -s=${sessionName} close`,
+    statePath: paths.statePath,
+    stateReadOnly: true,
+  };
+}
+
+function main(argv = process.argv.slice(2)) {
+  const args = parseArgs(argv);
+  const result = launchSession({
+    authDir: args.authDir,
+    session: args.session,
+    url: args.url || args._[0],
+    headed: Boolean(args.headed),
+  });
+  printJson(result);
+}
+
+if (require.main === module) {
   try {
-    context = await browser.newContext({ ...options, viewport: { width: 1440, height: 1000 } });
-    const page = await context.newPage();
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(Number(args.waitMs || 3000));
-    await fs.promises.mkdir(path.dirname(screenshotPath), { recursive: true });
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    protectPrivateFile(screenshotPath);
-    const finalUrl = page.url();
-    const result = { requestedUrl: sanitizeUrl(url), finalUrl: sanitizeUrl(finalUrl), title: await page.title(), screenshotPath, language: await page.evaluate(() => navigator.language), redirectedToLogin: /(?:login|sign-?in|oauth|authorize|authentication)/i.test(finalUrl), playwrightSource: source };
-    printJson(result);
-  } finally {
-    if (context) await context.close().catch(() => null);
-    await browser.close().catch(() => null);
+    main();
+  } catch (error) {
+    printJson({ ok: false, error: sanitizeError(error) });
+    process.exit(1);
   }
-})().catch((error) => { printJson({ ok: false, error: sanitizeError(error) }); process.exit(1); });
+}
+
+module.exports = { launchSession, main };

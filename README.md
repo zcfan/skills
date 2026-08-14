@@ -11,7 +11,7 @@ My personal Codex and agent skills. Each `skills/<name>/` directory is an indepe
 
 ## Installation
 
-General prerequisite: Node.js 18 or later. The Playwright skill also requires npm. See the dedicated section below for the additional `lark-worklog` dependencies.
+General prerequisite: Node.js 18 or later. See the dedicated sections below for each skill's external dependencies.
 
 With an agent that supports [skills](https://skills.sh/):
 
@@ -29,13 +29,23 @@ The installer will ask which skill and target agent to use.
 npx skills@latest add zcfan/skills --skill playwright-auth-wrapper
 ```
 
-Its core purpose is to let you log in manually once, save that authentication state, and then launch multiple isolated Playwright automation instances in parallel. Every instance reads the same saved state but uses its own Browser Context, so concurrent tasks do not share a writable browser profile or overwrite the login state.
+It requires both the official [`@playwright/cli`](https://github.com/microsoft/playwright-cli) executable and the official `playwright-cli` companion Skill:
+
+```bash
+npm install -g @playwright/cli@latest
+playwright-cli install --skills=agents
+playwright-cli install-browser chromium
+```
+
+If either dependency is missing, `playwright-auth-wrapper` shows the official installation guide and recommends the applicable commands. It also asks whether the user wants the Agent to run those steps automatically; it never installs them without explicit approval. Reload the Agent if the newly installed companion Skill is not discovered immediately.
+
+Its core purpose is to let you log in manually once, save that authentication state, and then launch multiple isolated `playwright-cli` sessions in parallel. Launch returns a unique session name and leaves the browser running. The Agent then follows the official `playwright-cli` Skill to navigate, interact, inspect, capture output, and eventually close that same session.
 
 The skill starts with a read-only readiness check and routes requests in this order:
 
-- Not initialized: automatically run Setup to install the pinned Playwright version and Chromium, then ask whether to continue with Login.
+- Missing configuration or dependencies: run Setup, offering to install the official CLI, companion Skill, and Chromium when needed.
 - Explicit login or expired-state refresh request: run Login. This is the only subflow allowed to write `storage-state.json`.
-- Any other page opening, screenshot, or browser automation request: default to read-only Launch. Each task creates an isolated Browser Context, so multiple tasks can safely read the same authentication state in parallel.
+- Any other page opening, screenshot, or browser automation request: default to read-only Launch. The wrapper opens an authenticated named session and hands its name to the Agent without taking a screenshot or closing it. Each task receives an isolated session, so multiple tasks can safely read the same authentication state in parallel.
 
 ### Use Lark Worklog
 
@@ -96,8 +106,8 @@ skills/
 - Never commit login state, tokens, cookies, authentication screenshots, or runtime configuration.
 - Never commit work-log spreadsheet URLs, task content, or linked document tokens. `lark-worklog` creates no local configuration.
 - Store authentication data in the current user's data directory. On POSIX systems, directories use mode `0700` and sensitive files use `0600`.
-- Install the pinned Playwright runtime privately inside the authentication directory without modifying the global npm environment.
-- Save state from the Login subflow only after the user creates the session-specific confirmation marker. A timeout never overwrites existing state.
+- Install Playwright CLI and its companion Skill only after explicit approval, using the official project's instructions.
+- Save state from the Login subflow only after the user confirms that manual login is complete. Validate a temporary export before atomically replacing existing state.
 - Remove credentials, query parameters, and fragments from URLs in logs and metadata.
 
 Report security issues privately through [SECURITY.md](SECURITY.md).

@@ -3,11 +3,11 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { randomUUID } = require('crypto');
+const { randomBytes, randomUUID } = require('crypto');
 const { spawnSync } = require('child_process');
 
-const PLAYWRIGHT_VERSION = '1.62.1';
 const CORRUPT_LOCK_GRACE_MS = 30_000;
+const PLAYWRIGHT_CLI_INSTALL_URL = 'https://github.com/microsoft/playwright-cli';
 
 function defaultAuthDir() {
   if (process.env.PLAYWRIGHT_SHARED_AUTH_DIR) return process.env.PLAYWRIGHT_SHARED_AUTH_DIR;
@@ -26,7 +26,6 @@ function resolvePaths(authDir = defaultAuthDir()) {
     contextOptionsPath: path.join(authDir, 'context-options.json'),
     metadataPath: path.join(authDir, 'metadata.json'),
     lockPath: path.join(authDir, 'storage-state.lock'),
-    runtimeDir: path.join(authDir, 'runtime'),
   };
 }
 
@@ -37,12 +36,6 @@ function setPrivateMode(target, mode) {
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   setPrivateMode(dir, 0o700);
-}
-
-function createPrivateTempFile(prefix, filename) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
-  setPrivateMode(directory, 0o700);
-  return path.join(directory, filename);
 }
 
 function protectPrivateFile(file) {
@@ -84,17 +77,33 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-function buildContextOptions(paths, overrides = {}, existing = {}) {
-  const existingHeaders = existing.extraHTTPHeaders && typeof existing.extraHTTPHeaders === 'object'
-    ? existing.extraHTTPHeaders
+function savedContextOptions(config = {}) {
+  if (config.browser?.contextOptions && typeof config.browser.contextOptions === 'object') {
+    return config.browser.contextOptions;
+  }
+  return config;
+}
+
+function buildCliConfig(paths, overrides = {}, existing = {}) {
+  const existingContext = savedContextOptions(existing);
+  const existingHeaders = existingContext.extraHTTPHeaders && typeof existingContext.extraHTTPHeaders === 'object'
+    ? existingContext.extraHTTPHeaders
     : {};
   return {
-    storageState: paths.statePath,
-    locale: overrides.locale || process.env.PLAYWRIGHT_SHARED_LOCALE || existing.locale || 'zh-CN',
-    timezoneId: overrides.timezoneId || process.env.PLAYWRIGHT_SHARED_TIMEZONE || existing.timezoneId || 'Asia/Shanghai',
-    extraHTTPHeaders: {
-      ...existingHeaders,
-      'Accept-Language': overrides.acceptLanguage || process.env.PLAYWRIGHT_SHARED_ACCEPT_LANGUAGE || existingHeaders['Accept-Language'] || 'zh-CN,zh;q=0.9,en;q=0.8',
+    browser: {
+      ...(existing.browser && typeof existing.browser === 'object' ? existing.browser : {}),
+      browserName: 'chromium',
+      isolated: true,
+      contextOptions: {
+        ...existingContext,
+        storageState: paths.statePath,
+        locale: overrides.locale || process.env.PLAYWRIGHT_SHARED_LOCALE || existingContext.locale || 'zh-CN',
+        timezoneId: overrides.timezoneId || process.env.PLAYWRIGHT_SHARED_TIMEZONE || existingContext.timezoneId || 'Asia/Shanghai',
+        extraHTTPHeaders: {
+          ...existingHeaders,
+          'Accept-Language': overrides.acceptLanguage || process.env.PLAYWRIGHT_SHARED_ACCEPT_LANGUAGE || existingHeaders['Accept-Language'] || 'zh-CN,zh;q=0.9,en;q=0.8',
+        },
+      },
     },
   };
 }
@@ -103,7 +112,7 @@ function ensureSharedAuth(options = {}) {
   const paths = resolvePaths(options.authDir);
   ensureDir(paths.authDir);
   if (!fs.existsSync(paths.statePath)) writeJsonAtomic(paths.statePath, { cookies: [], origins: [] });
-  if (!fs.existsSync(paths.contextOptionsPath)) writeJsonAtomic(paths.contextOptionsPath, buildContextOptions(paths, options));
+  if (!fs.existsSync(paths.contextOptionsPath)) writeJsonAtomic(paths.contextOptionsPath, buildCliConfig(paths, options));
   if (!fs.existsSync(paths.metadataPath)) {
     const now = new Date().toISOString();
     writeJsonAtomic(paths.metadataPath, { createdAt: now, updatedAt: now, sites: [] });
@@ -111,22 +120,23 @@ function ensureSharedAuth(options = {}) {
   setPrivateMode(paths.statePath, 0o600);
   setPrivateMode(paths.contextOptionsPath, 0o600);
   setPrivateMode(paths.metadataPath, 0o600);
-  return { paths, contextOptions: readJson(paths.contextOptionsPath) };
+  return { paths, cliConfig: readJson(paths.contextOptionsPath) };
 }
 
 function configureSharedAuth(options = {}) {
-  const { paths, contextOptions: existing } = ensureSharedAuth(options);
-  const contextOptions = buildContextOptions(paths, options, existing);
-  writeJsonAtomic(paths.contextOptionsPath, contextOptions);
-  return { paths, contextOptions };
+  const { paths, cliConfig: existing } = ensureSharedAuth(options);
+  const cliConfig = buildCliConfig(paths, options, existing);
+  writeJsonAtomic(paths.contextOptionsPath, cliConfig);
+  return { paths, cliConfig };
 }
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     stdio: options.stdio || 'inherit',
-    shell: process.platform === 'win32',
     windowsHide: true,
     encoding: options.encoding,
+    timeout: options.timeout,
+    cwd: options.cwd,
     env: { ...process.env, ...(options.env || {}) },
   });
   if (result.error) throw result.error;
@@ -139,28 +149,62 @@ function run(command, args, options = {}) {
   return result;
 }
 
-function loadPlaywright(authDir) {
-  const failures = [];
-  try {
-    const packageRoot = path.join(resolvePaths(authDir).runtimeDir, 'node_modules', 'playwright');
-    return { playwright: require(packageRoot), packageRoot, source: 'shared-runtime' };
-  } catch (error) {
-    failures.push(`shared runtime: ${error && error.message || error}`);
+function findSkillFile(startDir, relativePath) {
+  let current = path.resolve(startDir);
+  for (let depth = 0; depth < 10; depth++) {
+    const candidate = path.join(current, relativePath);
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
+  return null;
+}
+
+function inspectPlaywrightDependencies(options = {}) {
+  const cliCommand = options.cliCommand || process.env.PLAYWRIGHT_CLI_COMMAND || 'playwright-cli';
+  let cliVersion = null;
+  let cliError = null;
   try {
-    const packageJsonPath = require.resolve('playwright/package.json');
-    const packageRoot = path.dirname(packageJsonPath);
-    return { playwright: require(packageRoot), packageRoot, source: 'local-fallback' };
+    const result = run(cliCommand, ['--version'], {
+      stdio: 'pipe',
+      encoding: 'utf8',
+      timeout: 5_000,
+      env: { NO_UPDATE_NOTIFIER: '1' },
+    });
+    cliVersion = String(result.stdout || result.stderr || '').trim() || 'installed';
   } catch (error) {
-    failures.push(`local: ${error && error.message || error}`);
+    cliError = error.code === 'ETIMEDOUT' ? 'playwright-cli-version-check-timed-out' : 'playwright-cli-not-found';
   }
-  throw new Error(`Playwright is unavailable. Run the Setup subflow of playwright-auth-wrapper first. ${failures.join(' | ')}`);
+
+  const cwd = options.cwd || process.cwd();
+  const homeDir = options.homeDir || os.homedir();
+  const skillCandidates = [
+    findSkillFile(cwd, path.join('.agents', 'skills', 'playwright-cli', 'SKILL.md')),
+    findSkillFile(cwd, path.join('.claude', 'skills', 'playwright-cli', 'SKILL.md')),
+    path.join(homeDir, '.agents', 'skills', 'playwright-cli', 'SKILL.md'),
+    path.join(homeDir, '.claude', 'skills', 'playwright-cli', 'SKILL.md'),
+    path.join(homeDir, '.codex', 'skills', 'playwright-cli', 'SKILL.md'),
+  ].filter(Boolean);
+  const skillPath = skillCandidates.find((candidate) => fs.existsSync(candidate)) || null;
+
+  return {
+    ready: Boolean(cliVersion && skillPath),
+    cli: { ready: Boolean(cliVersion), command: cliCommand, version: cliVersion, error: cliError },
+    skill: { ready: Boolean(skillPath), path: skillPath },
+    install: {
+      url: PLAYWRIGHT_CLI_INSTALL_URL,
+      cli: 'npm install -g @playwright/cli@latest',
+      skill: 'playwright-cli install --skills=agents',
+      browser: 'playwright-cli install-browser chromium',
+    },
+  };
 }
 
 function inspectSharedAuth(options = {}) {
   const paths = resolvePaths(options.authDir);
   const issues = [];
-  let contextOptions;
+  let cliConfig;
   let state;
   let metadata;
 
@@ -176,7 +220,7 @@ function inspectSharedAuth(options = {}) {
     try {
       const value = readJson(file);
       if (name === 'storage-state') state = value;
-      if (name === 'context-options') contextOptions = value;
+      if (name === 'context-options') cliConfig = value;
       if (name === 'metadata') metadata = value;
     } catch {
       issues.push(`invalid-${name}`);
@@ -186,33 +230,23 @@ function inspectSharedAuth(options = {}) {
   const storageStateValid = Boolean(state && Array.isArray(state.cookies) && Array.isArray(state.origins));
   if (state && !storageStateValid) issues.push('invalid-storage-state-shape');
 
+  const cliConfigShapeValid = Boolean(cliConfig?.browser?.contextOptions);
+  if (cliConfig && !cliConfigShapeValid) issues.push('invalid-playwright-cli-config-shape');
+  const contextOptions = cliConfigShapeValid ? cliConfig.browser.contextOptions : null;
   const contextStorageMatches = contextOptions?.storageState === paths.statePath;
-  if (contextOptions && !contextStorageMatches) {
-    issues.push('context-storage-state-path-mismatch');
-  }
+  if (cliConfigShapeValid && !contextStorageMatches) issues.push('context-storage-state-path-mismatch');
 
-  const packageRoot = path.join(paths.runtimeDir, 'node_modules', 'playwright');
-  let installedVersion = null;
-  let chromiumInstalled = false;
-  try {
-    installedVersion = readJson(path.join(packageRoot, 'package.json')).version || null;
-    if (installedVersion !== PLAYWRIGHT_VERSION) issues.push('playwright-version-mismatch');
-    const playwright = require(packageRoot);
-    const executablePath = playwright.chromium?.executablePath?.();
-    chromiumInstalled = Boolean(executablePath && fs.existsSync(executablePath));
-    if (!chromiumInstalled) issues.push('chromium-not-installed');
-  } catch {
-    issues.push('playwright-runtime-missing');
-  }
+  const dependencies = inspectPlaywrightDependencies(options);
+  if (!dependencies.cli.ready) issues.push(dependencies.cli.error);
+  if (!dependencies.skill.ready) issues.push('playwright-cli-skill-missing');
 
-  const configurationReady = storageStateValid && contextStorageMatches && Boolean(metadata);
-  const runtimeReady = installedVersion === PLAYWRIGHT_VERSION && chromiumInstalled;
+  const configurationReady = storageStateValid && cliConfigShapeValid && contextStorageMatches && Boolean(metadata);
   const cookieCount = storageStateValid ? state.cookies.length : 0;
   const originCount = storageStateValid ? state.origins.length : 0;
   return {
     authDir: paths.authDir,
-    setupRequired: !configurationReady || !runtimeReady,
-    issues: [...new Set(issues)],
+    setupRequired: !configurationReady || !dependencies.ready,
+    issues: [...new Set(issues.filter(Boolean))],
     configuration: {
       ready: configurationReady,
       locale: contextOptions?.locale || null,
@@ -220,18 +254,49 @@ function inspectSharedAuth(options = {}) {
       acceptLanguage: contextOptions?.extraHTTPHeaders?.['Accept-Language'] || null,
       metadataPresent: Boolean(metadata),
     },
-    runtime: {
-      ready: runtimeReady,
-      expectedVersion: PLAYWRIGHT_VERSION,
-      installedVersion,
-      chromiumInstalled,
-    },
+    dependencies,
     authentication: {
       hasSavedState: cookieCount > 0 || originCount > 0,
       cookieCount,
       originCount,
     },
   };
+}
+
+function assertCliConfigReady(cliConfig, paths) {
+  if (!cliConfig?.browser?.contextOptions || cliConfig.browser.contextOptions.storageState !== paths.statePath) {
+    const error = new Error('Shared Playwright CLI configuration is not ready. Run the Setup subflow before Login or Launch.');
+    error.code = 'PLAYWRIGHT_CLI_CONFIG_NOT_READY';
+    throw error;
+  }
+  return cliConfig;
+}
+
+function assertSessionName(sessionName) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(sessionName || '')) {
+    throw new Error('Session names must be 1-64 characters using letters, digits, dots, underscores, or hyphens.');
+  }
+  return sessionName;
+}
+
+function createSessionName(prefix = 'shared-auth') {
+  return assertSessionName(`${prefix}-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`);
+}
+
+function playwrightCliArgs(sessionName, command, commandArgs = []) {
+  return [`-s=${assertSessionName(sessionName)}`, command, ...commandArgs];
+}
+
+function dependencyError(dependencies) {
+  const missing = [];
+  if (!dependencies.cli.ready) missing.push('the official playwright-cli executable');
+  if (!dependencies.skill.ready) missing.push('the official playwright-cli companion Skill');
+  const error = new Error(
+    `Missing ${missing.join(' and ')}. Follow ${PLAYWRIGHT_CLI_INSTALL_URL}. Recommended commands: `
+    + `${dependencies.install.cli}; ${dependencies.install.skill}; ${dependencies.install.browser}.`,
+  );
+  error.code = 'PLAYWRIGHT_CLI_DEPENDENCY_MISSING';
+  return error;
 }
 
 function isProcessAlive(pid) {
@@ -287,7 +352,7 @@ function acquireLock(lockPath) {
     } catch (error) {
       if (error && error.code === 'EEXIST' && attempt === 0 && removeStaleLock(lockPath)) continue;
       if (error && error.code === 'EEXIST') {
-        const locked = new Error(`Another shared-auth login is active. Lock: ${lockPath}`);
+        const locked = new Error(`Another shared-auth save is active. Lock: ${lockPath}`);
         locked.code = 'AUTH_STATE_LOCKED';
         throw locked;
       }
@@ -321,16 +386,21 @@ function parseArgs(argv) {
 }
 
 module.exports = {
+  PLAYWRIGHT_CLI_INSTALL_URL,
   acquireLock,
-  PLAYWRIGHT_VERSION,
+  assertCliConfigReady,
+  assertSessionName,
+  buildCliConfig,
   configureSharedAuth,
-  createPrivateTempFile,
+  createSessionName,
   defaultAuthDir,
+  dependencyError,
   ensureDir,
   ensureSharedAuth,
+  inspectPlaywrightDependencies,
   inspectSharedAuth,
-  loadPlaywright,
   parseArgs,
+  playwrightCliArgs,
   printJson,
   protectPrivateFile,
   readJson,
@@ -338,5 +408,6 @@ module.exports = {
   run,
   sanitizeError,
   sanitizeUrl,
+  savedContextOptions,
   writeJsonAtomic,
 };
