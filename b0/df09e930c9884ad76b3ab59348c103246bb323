@@ -1,0 +1,33 @@
+README.md
+  s_8911e9c3ddc37b::t_d1144f029371c4 10,67,74,76-78,109
+README.zh-CN.md
+  s_8911e9c3ddc37b::t_856fc77b190061 10,67,74,76-78,109
+skills/lark-worklog/SKILL.md
+  s_8911e9c3ddc37b::t_0fc8789a659b93 3,8,19,31,34,37-40,43-44,47-54,56,58-60,82,87-88,98-100
+skills/lark-worklog/references/cache.md
+  s_8911e9c3ddc37b::t_4b24b1dbf0a571 1-129
+skills/lark-worklog/references/worklog-format.md
+  s_8911e9c3ddc37b::t_88bfcb79aa98c4 10-18,22,24,35,38,57,59,61,97-102,121,125,214,219
+skills/lark-worklog/scripts/worklog-cache.cjs
+  s_8911e9c3ddc37b::t_4fe659c8c797e1 1-615
+tests/lark-worklog.test.cjs
+  s_8911e9c3ddc37b::t_0b118654676d6e 2-3,9,11-54,260-529
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b0df09e930c9884ad76b3ab59348c103246bb323",
+  "prompts": {},
+  "sessions": {
+    "s_8911e9c3ddc37b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01986-85aa-7d41-a747-a1ae8e5a1283",
+        "model": "unknown"
+      },
+      "human_author": "zcfan <zcfan@users.noreply.github.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
