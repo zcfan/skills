@@ -7,7 +7,7 @@ My personal Codex and agent skills. Each `skills/<name>/` directory is an indepe
 ## Included Skills
 
 - `playwright-auth-wrapper`: Reuses one manually established login state across multiple isolated Playwright automation instances running in parallel. It routes Setup, Login, and Launch based on the user's intent.
-- `lark-worklog`: Records and tracks work progress by maintaining a structured Lark spreadsheet, including todos, progress updates, task documents, and daily or monthly rollovers.
+- `lark-worklog`: Records and tracks work progress in a structured Lark spreadsheet, with a same-day A:B read cache, task documents, and daily or monthly rollovers.
 
 ## Installation
 
@@ -64,16 +64,18 @@ npx @larksuite/cli@latest install
 
 Reload the agent after installation so it can discover the official skills.
 
-`lark-worklog` stores no local configuration. On the first work-log request in each conversation, it uses the current authenticated Lark identity to find spreadsheets originally created by that user whose title contains the literal `[worklog]` marker:
+`lark-worklog` keeps a user-private same-day cache containing the selected workbook metadata and a normalized snapshot of columns A and B (task identity and today's entries). A clean cache can answer current-work read requests without loading Lark skills or making network calls. When no reusable target exists, the Skill uses the current authenticated Lark identity to find spreadsheets originally created by that user whose title contains the literal `[worklog]` marker:
 
 ```bash
 lark-cli drive +search --query '[worklog]' --only-title \
   --doc-types sheet --created-by-me --page-size 20 --as user --format json
 ```
 
-Results are filtered again to require the literal `[worklog]` substring. With one match, the skill uses it directly. With multiple matches, it selects the first API result and warns that stable behavior requires exactly one matching spreadsheet. With no match, it asks for authorization to create a new spreadsheet with the fixed title `工作日志 [worklog]`. If the user explicitly wants to use another spreadsheet, the skill validates its creator and structure before proceeding. Later work-log requests in the same conversation reuse the selected spreadsheet without searching again unless the user explicitly asks to switch or rediscover the target.
+Results are filtered again to require the literal `[worklog]` substring. With one match, the skill uses it directly. With multiple matches, it selects the first API result and warns that stable behavior requires exactly one matching spreadsheet. With no match, it asks for authorization to create a new spreadsheet with the fixed title `工作日志 [worklog]`. If the user explicitly wants to use another spreadsheet, the skill validates its creator and structure before proceeding. A cache miss with valid target metadata reuses that exact workbook instead of searching again.
 
-The skill never writes spreadsheet URLs, timezones, document tokens, or search results to local storage. Workbook selection is reused only within the current conversation, and work-log dates use the agent process's local clock. Daily rollover inserts today's column before column B and verifies the resulting structure. When automatic daily or monthly rollover is required, the agent first explains that structural changes and read-back verification may make the request slightly slower, then continues. Authentication and application settings remain managed by `lark-cli`.
+The cache is a read-only mirror: writes always use complete live cells, and every sheet mutation marks the cache dirty before writing. After remote read-back verification, the Skill reads the complete current A:B range and atomically replaces the cache. Failed or interrupted writes leave it dirty, so later reads must reconcile live state. Date changes and reported manual edits also force a live refresh. This contract assumes one machine running the Skill is the only routine spreadsheet writer; users can explicitly request a refresh after an occasional manual edit. Authentication and application settings remain managed by `lark-cli`.
+
+On POSIX systems the cache directory uses mode `0700` and files use `0600`. It contains task titles and today's work items but no linked document bodies, historical columns, credentials, or timezone configuration. The default location is `~/Library/Caches/lark-worklog` on macOS and `${XDG_CACHE_HOME:-~/.cache}/lark-worklog` on Linux.
 
 For repository development on macOS or Linux, link every skill into the agent's skill directory:
 
@@ -104,7 +106,7 @@ skills/
 ## Security Model
 
 - Never commit login state, tokens, cookies, authentication screenshots, or runtime configuration.
-- Never commit work-log spreadsheet URLs, task content, or linked document tokens. `lark-worklog` creates no local configuration.
+- Never commit work-log cache files, spreadsheet URLs, task content, or linked document tokens. The local cache is sensitive runtime data and must stay in its private cache directory.
 - Store authentication data in the current user's data directory. On POSIX systems, directories use mode `0700` and sensitive files use `0600`.
 - Install Playwright CLI and its companion Skill only after explicit approval, using the official project's instructions.
 - Save state from the Login subflow only after the user confirms that manual login is complete. Validate a temporary export before atomically replacing existing state.

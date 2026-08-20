@@ -7,20 +7,21 @@ Read this reference before changing the spreadsheet or a linked task document. U
 1. [Target discovery](#target-discovery)
 2. [Workbook model](#workbook-model)
 3. [Mandatory preflight](#mandatory-preflight)
-4. [Complete cell reads](#complete-cell-reads)
-5. [Creating a workbook](#creating-a-workbook)
-6. [Inspecting and resolving tasks](#inspecting-and-resolving-tasks)
-7. [Daily entries](#daily-entries)
-8. [Task identity and metadata](#task-identity-and-metadata)
-9. [Creating a task](#creating-a-task)
-10. [Maintaining task documents](#maintaining-task-documents)
-11. [Verification and failures](#verification-and-failures)
+4. [Local snapshot handoff](#local-snapshot-handoff)
+5. [Complete cell reads](#complete-cell-reads)
+6. [Creating a workbook](#creating-a-workbook)
+7. [Inspecting and resolving tasks](#inspecting-and-resolving-tasks)
+8. [Daily entries](#daily-entries)
+9. [Task identity and metadata](#task-identity-and-metadata)
+10. [Creating a task](#creating-a-task)
+11. [Maintaining task documents](#maintaining-task-documents)
+12. [Verification and failures](#verification-and-failures)
 
 ## Target discovery
 
-Keep no persistent local target configuration. Discover the workbook once per conversation, then reuse that exact target from conversation context.
+Reuse an exact target from a clean cache, a dirty/different-date cache miss that returned target metadata, or conversation context. Discover a workbook only when none of those sources provides a target.
 
-1. If the current conversation already selected a workbook, reuse its URL or token without Drive search. Do not silently change it. Search again only when the user explicitly requests rediscovery or target switching; if the target becomes inaccessible, stop and report that fact.
+1. If the current conversation or cache already selected a workbook, reuse its token without Drive search. Do not silently change it. Search again only when the user explicitly requests rediscovery or target switching; if the target becomes inaccessible, stop and report that fact.
 2. Otherwise load `lark-drive` and search as the authenticated user:
 
    ```bash
@@ -31,10 +32,10 @@ Keep no persistent local target configuration. Discover the workbook once per co
 3. `--created-by-me` uses original-creator semantics. Keep only spreadsheets originally created by the current logged-in user, then keep only results whose returned title contains the literal, case-sensitive substring `[worklog]`. Do not accept a broad semantic match such as `worklog` without brackets.
 4. Preserve API result order. The first exact match is the selected target. Continue pagination only until a second exact match is found or `has_more` becomes false; this is enough to decide whether the marker is unique.
 5. With one match, continue silently. With multiple matches, continue with the first but immediately identify its title and URL and warn that exactly one `[worklog]` spreadsheet is required for stable selection. Search ranking can change, so “first” is a fallback rather than a durable identity.
-6. With no match, ask the user to authorize creation of `工作日志 [worklog]` as the current user. If the user explicitly requests another spreadsheet, validate its creator, literal title marker, and structure before selecting it for this conversation. Never save a supplied URL locally.
+6. With no match, ask the user to authorize creation of `工作日志 [worklog]` as the current user. If the user explicitly requests another spreadsheet, validate its creator, literal title marker, and structure before selecting it. Persist its target metadata only after live preflight and a complete A:B snapshot succeed.
 7. Load `lark-sheets` and inspect the selected first result. If it is inaccessible, stop and report it. If its structure differs from the reference format, keep this target and follow the compatibility rules below; do not silently fall through to a later candidate.
 
-Search operates only on resources visible to the current authenticated Lark identity, requires `search:docs:read`, and requires a user identity so `--created-by-me` can resolve its open ID. The official `lark-cli` may persist its own credentials and application configuration, but `lark-worklog` must not write a URL, token, timezone, result order, or selected target to local storage. Conversation context is the only target cache.
+Search operates only on resources visible to the current authenticated Lark identity, requires `search:docs:read`, and requires a user identity so `--created-by-me` can resolve its open ID. Store only the selected title, workbook token, current-month sheet ID, month, and revision inside the protected cache defined in [cache.md](cache.md). Do not persist search result order, alternative candidates, credentials, or timezone configuration.
 
 ## Workbook model
 
@@ -53,11 +54,11 @@ Search operates only on resources visible to the current authenticated Lark iden
 
 ## Mandatory preflight
 
-Complete both phases before the first work-log maintenance request for a workbook and local date. Run them again when the local date or month changes, after a target switch, or after a structural failure. Reuse a successful same-day preflight from conversation context for ordinary follow-up requests.
+Complete both phases before creating a clean cache for a workbook and local date. Run them again when the cache is missing or dirty, the local date or month changes, the user requests a live refresh, after a target switch, or after a structural failure. A clean same-day cache proves that preflight completed when the snapshot was created and may serve read-only current-work requests without repeating either phase.
 
-For speed, remember the selected workbook, current-month sheet ID, prepared local date, and a task identity index only in the current conversation. On the same prepared date, read only the target cells. Reuse cached task rows after a targeted read confirms the expected title or mention token. Refresh column A when that check fails, and invalidate the index after row insertion/deletion or a task identity edit.
+For speed, reuse the selected workbook, current-month sheet ID, prepared local date, and normalized A:B rows from [cache.md](cache.md). Cached task rows may answer read-only questions. For writes, use a complete targeted live read to confirm the expected title or mention token while holding the writer lease; invalidate any conversation row index after row insertion/deletion or a task identity edit.
 
-If either phase needs a structural write, immediately send a short progress note before writing: explain that automatic date/month rollover plus read-back verification can make this request slightly slower than an ordinary log update, reassure the user that processing is continuing, and do not ask for an extra confirmation.
+If either phase needs a structural write, immediately send a short progress note before writing: explain that automatic date/month rollover plus read-back verification can make this request slightly slower than an ordinary log update, reassure the user that processing is continuing, acquire the cache writer lease, and do not ask for an extra confirmation.
 
 ### Month rollover
 
@@ -93,6 +94,12 @@ If either phase needs a structural write, immediately send a short progress note
 
 10. Re-read A1:B through the last task row and the header row after the batch. Verify that column A's values, rich-text mentions, links, and backgrounds match the pre-insert snapshot exactly; verify B's date, dense carried text, styles, borders, and width. If the structural action did not report a single insertion at B, stop and report the discrepancy.
 
+## Local snapshot handoff
+
+After a read-only live preflight succeeds without changing the sheet, read a complete contiguous `A1:B<physical-row-count>` range with values and pass the untouched `cells-get` envelope to `worklog-cache.cjs replace`. If preflight performed a month or day rollover under the writer lease, pass the post-rollover envelope to `finish-write` instead. The helper validates today's B1 header, trims trailing empty rows, normalizes task identity and daily items, and atomically replaces the same-user cache.
+
+For every sheet mutation, acquire the cache writer lease before the live planning read. After remote verification, perform the same full A:B read and pass it to `finish-write`. On any failure, call `abort-write` so a subsequent read cannot serve the pre-write snapshot. Follow [cache.md](cache.md) for exact commands and recovery rules.
+
 ## Complete cell reads
 
 Every cell used to identify a task, transform text, preserve rich text, carry a day, or verify a write must be read in full. Work-log cells are expected to be modest in size, so completeness takes priority over saving a small amount of output.
@@ -111,11 +118,11 @@ Create a workbook only after explicit authorization. Compute the current month a
 2. Initialize A1 as empty, A2 as `杂项`, and B1 as today's date header. Apply the reference layout above and freeze row 1 and column A.
 3. Do not add sample tasks or copy private template content.
 4. Re-read workbook metadata, A1:B2, styles, dimensions, and frozen panes.
-5. After validation succeeds, return its title and URL to the user. Do not store either locally.
+5. After validation succeeds, create the protected same-day cache snapshot, then return the workbook title and URL to the user. Persist only the target metadata and A:B read model allowed by [cache.md](cache.md).
 
 ## Inspecting and resolving tasks
 
-After preflight, read current workbook metadata, the header row, column A through the real last task row, and today's column.
+For a live path after preflight, read current workbook metadata, the header row, column A through the real last task row, and today's column. For a clean same-day read-only cache hit, use the equivalent normalized fields in `snapshot.rows`; do not use cached fields to plan a write.
 
 For each task row, collect:
 
@@ -204,10 +211,12 @@ Fetch the changed section again and verify the new content and existing resource
 ## Verification and failures
 
 - Before every write, identify the exact workbook, sheet ID, row, column, and range.
+- Hold the per-identity cache writer lease for every sheet mutation. Never use `--recover` to bypass a live writer.
 - Keep destructive row ranges in descending order.
 - Re-read every written range. For structural changes, also re-read workbook and sheet metadata.
 - Treat a failed batch as potentially partially applied even if current CLI documentation describes transactional behavior.
 - For `+cells-set --writes` partial failures, re-read all affected cells and retry only rows that did not reach the intended state. Do not resend the full batch.
+- If a sheet write, read-back verification, or post-write A:B refresh fails, release the lease with `abort-write` and keep the cache dirty until a full live reconciliation succeeds.
 - If today's header is duplicated, stop and ask the user to resolve it.
 - If the target differs from the reference format, map its rows, columns, task identities, dates, and statuses before acting. Continue compatibly when that mapping is unambiguous and the requested write does not require destructive reshaping.
 - If the mapping is ambiguous or the operation requires structural conversion, describe the mismatch and ask whether to convert the selected workbook or create a compliant one. A user's explicit request for a specific conversion is sufficient authorization for that conversion.

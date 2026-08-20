@@ -1,10 +1,57 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
 const scriptPath = path.resolve(__dirname, '../skills/lark-worklog/scripts/worklog-rules.cjs');
+const cacheScriptPath = path.resolve(__dirname, '../skills/lark-worklog/scripts/worklog-cache.cjs');
 const worklog = require(scriptPath);
+const cache = require(cacheScriptPath);
+
+function cacheCellsGet({ revision = 10, taskText = '[] cached todo' } = {}) {
+  return {
+    ok: true,
+    data: {
+      has_more: false,
+      revision,
+      ranges: [{
+        actual_range: 'A1:B6',
+        truncated: false,
+        row_indices: [1, 2, 3, 4, 5, 6],
+        col_indices: ['A', 'B'],
+        cells: [
+          [{}, { value: '2026/08/19 Wednesday' }],
+          [{ value: '杂项' }, { value: taskText }],
+          [{ value: 'Task one\n别名：one、first\nbackground note\n状态：挂起' }, { value: '[~] investigating' }],
+          [{ value: 'Task two' }, {}],
+          [{}, {}],
+          [{}, {}],
+        ],
+      }],
+    },
+  };
+}
+
+function cacheMetadata(identityKey = 'tenant:user-one') {
+  return {
+    identityKey,
+    workbookTitle: '工作日志 [worklog]',
+    workbookToken: 'sheet_token',
+    sheetId: 'sheet_id',
+    date: '2026-08-19',
+  };
+}
+
+function withCacheDirectory(callback) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'lark-worklog-cache-'));
+  try {
+    return callback(directory);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
 
 test('date helpers use the process-local calendar and cover year boundaries', () => {
   assert.deepEqual(
@@ -209,4 +256,274 @@ test('set-status CLI emits a cells-set writes payload without style fields', () 
     writes[0].cells[0][0].rich_text.map((segment) => segment.text).join(''),
     /\n\n状态：/,
   );
+});
+
+test('cache snapshots contain only the current A:B read model and trim trailing rows', () => {
+  const snapshot = cache.buildSnapshot(
+    cacheCellsGet(),
+    cacheMetadata(),
+    new Date('2026-08-19T09:00:00.000Z'),
+  );
+
+  assert.equal(snapshot.state, 'clean');
+  assert.equal(snapshot.prepared_date, '2026-08-19');
+  assert.equal(snapshot.actual_range, 'A1:B4');
+  assert.equal(snapshot.rows.length, 3);
+  assert.deepEqual(snapshot.rows[0].daily_items, [{ type: 'open', text: 'cached todo' }]);
+  assert.deepEqual(snapshot.rows[1], {
+    row: 3,
+    title: 'Task one',
+    aliases: ['one', 'first'],
+    status: '挂起',
+    notes: ['background note'],
+    daily_text: '[~] investigating',
+    daily_items: [{ type: 'progress', text: 'investigating' }],
+  });
+  assert.equal(JSON.stringify(snapshot).includes('mention_token'), false);
+});
+
+test('same-day cache reads hit without an identity when exactly one entry exists', () => {
+  withCacheDirectory((root) => {
+    cache.replaceCache({
+      root,
+      identityKey: 'tenant:user-one',
+      cellsGet: cacheCellsGet(),
+      metadata: cacheMetadata(),
+      now: new Date('2026-08-19T09:00:00.000Z'),
+    });
+
+    const hit = cache.cacheReadResult({ root, date: '2026-08-19' });
+    assert.equal(hit.status, 'hit');
+    assert.equal(hit.snapshot.target.workbook_token, 'sheet_token');
+    assert.equal(hit.snapshot.rows[0].title, '杂项');
+    assert.deepEqual(
+      cache.cacheReadResult({ root, date: '2026-08-20' }),
+      {
+        status: 'miss',
+        reason: 'date_mismatch',
+        prepared_date: '2026-08-19',
+        expected_date: '2026-08-20',
+        target: {
+          workbook_title: '工作日志 [worklog]',
+          workbook_token: 'sheet_token',
+          sheet_id: 'sheet_id',
+          month: '202608',
+        },
+      },
+    );
+
+    if (process.platform !== 'win32') {
+      const mode = fs.statSync(root).mode & 0o777;
+      assert.equal(mode, 0o700);
+      const entry = fs.readdirSync(root).find((file) => file.endsWith('.json'));
+      assert.equal(fs.statSync(path.join(root, entry)).mode & 0o777, 0o600);
+    }
+  });
+});
+
+test('write leases make cache reads miss until a verified full snapshot replaces it', () => {
+  withCacheDirectory((root) => {
+    cache.replaceCache({
+      root,
+      identityKey: 'tenant:user-one',
+      cellsGet: cacheCellsGet(),
+      metadata: cacheMetadata(),
+    });
+    const lease = cache.acquireLease({
+      root,
+      identityKey: 'tenant:user-one',
+      owner: 'writer-one',
+      now: new Date('2026-08-19T10:00:00.000Z'),
+    });
+    assert.equal(lease.owner, 'writer-one');
+    assert.deepEqual(
+      cache.cacheReadResult({ root, date: '2026-08-19', identityKey: 'tenant:user-one' }),
+      { status: 'miss', reason: 'write_in_progress' },
+    );
+    assert.throws(
+      () => cache.acquireLease({ root, identityKey: 'tenant:user-one', owner: 'writer-two' }),
+      (error) => error.code === 'CACHE_LOCKED',
+    );
+
+    cache.replaceCache({
+      root,
+      identityKey: 'tenant:user-one',
+      owner: 'writer-one',
+      cellsGet: cacheCellsGet({ revision: 11, taskText: '[] refreshed todo' }),
+      metadata: cacheMetadata(),
+      now: new Date('2026-08-19T10:01:00.000Z'),
+    });
+    const hit = cache.cacheReadResult({ root, date: '2026-08-19', identityKey: 'tenant:user-one' });
+    assert.equal(hit.status, 'hit');
+    assert.equal(hit.snapshot.revision, 11);
+    assert.equal(hit.snapshot.rows[0].daily_items[0].text, 'refreshed todo');
+  });
+});
+
+test('aborted writes leave the cache dirty and multiple identities require disambiguation', () => {
+  withCacheDirectory((root) => {
+    cache.replaceCache({
+      root,
+      identityKey: 'tenant:user-one',
+      cellsGet: cacheCellsGet(),
+      metadata: cacheMetadata(),
+    });
+    cache.acquireLease({ root, identityKey: 'tenant:user-one', owner: 'writer-one' });
+    cache.abortWrite({
+      root,
+      identityKey: 'tenant:user-one',
+      owner: 'writer-one',
+      reason: 'verification_failed',
+    });
+    assert.deepEqual(
+      cache.cacheReadResult({ root, date: '2026-08-19', identityKey: 'tenant:user-one' }),
+      {
+        status: 'miss',
+        reason: 'verification_failed',
+        target: {
+          workbook_title: '工作日志 [worklog]',
+          workbook_token: 'sheet_token',
+          sheet_id: 'sheet_id',
+          month: '202608',
+        },
+      },
+    );
+
+    cache.replaceCache({
+      root,
+      identityKey: 'tenant:user-two',
+      cellsGet: cacheCellsGet({ revision: 12 }),
+      metadata: cacheMetadata('tenant:user-two'),
+    });
+    assert.deepEqual(
+      cache.cacheReadResult({ root, date: '2026-08-19' }),
+      { status: 'miss', reason: 'identity_ambiguous', entry_count: 2 },
+    );
+  });
+});
+
+test('explicit invalidation requires refresh and stale leases recover only from a full live snapshot', () => {
+  withCacheDirectory((root) => {
+    cache.replaceCache({
+      root,
+      identityKey: 'tenant:user-one',
+      cellsGet: cacheCellsGet(),
+      metadata: cacheMetadata(),
+    });
+    cache.markDirty({
+      root,
+      identityKey: 'tenant:user-one',
+      reason: 'manual_edit_reported',
+      now: new Date('2026-08-19T09:00:00.000Z'),
+    });
+    const invalidated = cache.cacheReadResult({
+      root,
+      date: '2026-08-19',
+      identityKey: 'tenant:user-one',
+    });
+    assert.equal(invalidated.status, 'miss');
+    assert.equal(invalidated.reason, 'manual_edit_reported');
+    assert.equal(invalidated.target.workbook_token, 'sheet_token');
+
+    cache.replaceCache({
+      root,
+      identityKey: 'tenant:user-one',
+      cellsGet: cacheCellsGet(),
+      metadata: cacheMetadata(),
+    });
+    cache.acquireLease({
+      root,
+      identityKey: 'tenant:user-one',
+      owner: 'crashed-writer',
+      now: new Date('2026-08-19T10:00:00.000Z'),
+    });
+    assert.throws(
+      () => cache.replaceCache({
+        root,
+        identityKey: 'tenant:user-one',
+        cellsGet: cacheCellsGet({ revision: 13 }),
+        metadata: cacheMetadata(),
+        recover: true,
+        now: new Date('2026-08-19T10:10:00.000Z'),
+      }),
+      (error) => error.code === 'CACHE_LOCKED',
+    );
+    cache.replaceCache({
+      root,
+      identityKey: 'tenant:user-one',
+      cellsGet: cacheCellsGet({ revision: 13, taskText: '[] recovered todo' }),
+      metadata: cacheMetadata(),
+      recover: true,
+      now: new Date('2026-08-19T10:31:00.000Z'),
+    });
+    const recovered = cache.cacheReadResult({ root, date: '2026-08-19' });
+    assert.equal(recovered.status, 'hit');
+    assert.equal(recovered.snapshot.revision, 13);
+    assert.equal(recovered.snapshot.rows[0].daily_items[0].text, 'recovered todo');
+  });
+});
+
+test('cache replacement rejects clipped snapshots and non-today column B', () => {
+  const clipped = cacheCellsGet();
+  clipped.data.has_more = true;
+  assert.throws(
+    () => cache.buildSnapshot(clipped, cacheMetadata()),
+    (error) => error.code === 'INCOMPLETE_CELLS_GET',
+  );
+
+  const wrongDate = cacheCellsGet();
+  wrongDate.data.ranges[0].cells[0][1].value = '2026/08/18 Tuesday';
+  assert.throws(
+    () => cache.buildSnapshot(wrongDate, cacheMetadata()),
+    (error) => error.code === 'DATE_HEADER_MISMATCH',
+  );
+});
+
+test('cache refuses an existing POSIX directory visible to other users', { skip: process.platform === 'win32' }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lark-worklog-cache-insecure-'));
+  try {
+    fs.chmodSync(root, 0o755);
+    assert.throws(
+      () => cache.replaceCache({
+        root,
+        identityKey: 'tenant:user-one',
+        cellsGet: cacheCellsGet(),
+        metadata: cacheMetadata(),
+      }),
+      (error) => error.code === 'INSECURE_CACHE_DIRECTORY',
+    );
+  } finally {
+    fs.chmodSync(root, 0o700);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cache CLI replaces and reads a same-day snapshot', () => {
+  withCacheDirectory((root) => {
+    const replace = spawnSync(process.execPath, [
+      cacheScriptPath,
+      'replace',
+      '--cache-dir', root,
+      '--identity-key', 'tenant:user-one',
+      '--workbook-token', 'sheet_token',
+      '--workbook-title', '工作日志 [worklog]',
+      '--sheet-id', 'sheet_id',
+      '--date', '2026-08-19',
+    ], {
+      input: JSON.stringify(cacheCellsGet()),
+      encoding: 'utf8',
+    });
+    assert.equal(replace.status, 0, replace.stderr);
+
+    const get = spawnSync(process.execPath, [
+      cacheScriptPath,
+      'get',
+      '--cache-dir', root,
+      '--date', '2026-08-19',
+    ], { encoding: 'utf8' });
+    assert.equal(get.status, 0, get.stderr);
+    const output = JSON.parse(get.stdout);
+    assert.equal(output.data.status, 'hit');
+    assert.equal(output.data.snapshot.rows[0].daily_items[0].text, 'cached todo');
+  });
 });
